@@ -20,25 +20,25 @@
 
 ## Highlights
 
-- ⚡ **Instant Tag Autocomplete**: Pre-seeded with top e621 tags and learns dynamically as you browse. Never overwrites existing query tokens.
-- 🏷️ **Tag Inspector & One-Click Appending**: Color-coded categorized tags (Artist, Species, Character, Copyright, General). Single-click to add/toggle tags in search; right-click to exclude (`-tag`) or isolate.
-- 🔍 **Rich Search Filters**: Supports `-tag` (exclude), `~tag` (OR), metatags (`score:>100`, `artist:name`), ratings (Safe, Questionable, Explicit), and custom sort orders.
-- 🖼️ **Hover & Full-Screen Image Viewer**:
+- **Instant Tag Autocomplete**: Pre-seeded with top e621 tags and learns dynamically as you browse. Never overwrites existing query tokens.
+- **Tag Inspector & One-Click Appending**: Color-coded categorized tags (Artist, Species, Character, Copyright, General). Single-click to add/toggle tags in search; right-click to exclude (`-tag`) or isolate.
+- **Search Filters**: Supports `-tag` (exclude), `~tag` (OR), metatags (`score:>100`, `artist:name`), ratings (Safe, Questionable, Explicit), and custom sort orders.
+- **Hover & Full-Screen Image Viewer**:
   - **Hover**: Floating medium preview card directly over thumbnails.
   - **Click**: Full-screen modal viewer with keyboard navigation (`Left`/`Right`/`A`/`D`), fullscreen (`F11`), tag panel toggle (`T`), and instant download (`D`).
-- 📚 **Pools in Reading Order**: Browse pools by ID or name; one-click download preserves comic reading order (`0001_id.ext`, `0002_id.ext`).
-- ⭐ **User Favorites**: Load public or private favorites directly from your e621 account.
-- 🛡️ **Client-Side Blacklist**: Filter out unwanted tags locally without leaking rules to the network.
-- 💾 **SQLite Download History**: Tracks downloaded IDs to skip duplicates even across renames or directory changes; verifies MD5 checksums.
-- 📂 **Flexible Organization Modes**: Organize files by search query, artist, pool, species, character, copyright, rating, or flat.
-- 🪟 **Cross-Platform (Windows & Linux)**: Native installers, desktop shortcuts, and dedicated launchers for both platforms.
-- 🌐 **Polite API Client**: Complies strictly with e621's 1 req/sec rate limit policy and provides a built-in connection diagnostic tester.
+- **Pools in Reading Order**: Browse pools by ID or name; one-click download preserves comic reading order (`0001_id.ext`, `0002_id.ext`).
+- **User Favorites**: Load public or private favorites directly from your e621 account.
+- **Client-Side Blacklist**: Filter out unwanted tags locally without leaking rules to the network.
+- **SQLite Download History**: Tracks downloaded IDs to skip duplicates even across renames or directory changes; verifies MD5 checksums.
+- **Flexible Organization Modes**: Organize files by search query, artist, pool, species, character, copyright, rating, or flat.
+- **Cross-Platform (Windows & Linux)**: Native installers, desktop shortcuts, and dedicated launchers for both platforms.
+- **API Rate Compliance**: Complies with e621's 1 req/sec rate limit policy and provides a built-in connection diagnostic tester.
 
 ---
 
 ## Installation & Setup
 
-### 🪟 Windows Setup
+### Windows Setup
 
 1. **Prerequisite**: Ensure [Python 3.10+](https://www.python.org/downloads/) is installed and **"Add python.exe to PATH"** was checked during installation.
 2. **Download / Clone**:
@@ -55,7 +55,7 @@
 
 ---
 
-### 🐧 Linux Setup
+### Linux Setup
 
 1. **Quick Install (Desktop & Menu Shortcut)**:
    ```bash
