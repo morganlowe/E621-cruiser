@@ -62,6 +62,8 @@ class PathTests(unittest.TestCase):
     def test_sanitize(self):
         self.assertEqual(sanitize('a/b:c*?"<>|'), "a_b_c______")
         self.assertEqual(sanitize("..."), "_")
+        self.assertEqual(sanitize("con"), "_con_")
+        self.assertEqual(sanitize("AUX"), "_AUX_")
 
 
 class PostTests(unittest.TestCase):

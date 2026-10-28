@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-_CONFIG_BASE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-_DATA_BASE = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+if sys.platform == "win32":
+    _CONFIG_BASE = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    _DATA_BASE = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+else:
+    _CONFIG_BASE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    _DATA_BASE = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 
 CONFIG_DIR = _CONFIG_BASE / "e621-cruiser"
 DATA_DIR = _DATA_BASE / "e621-cruiser"

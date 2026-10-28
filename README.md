@@ -12,7 +12,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/GUI-PySide6%20%28Qt6%29-green.svg" alt="PySide6">
-  <img src="https://img.shields.io/badge/Platform-Linux-orange.svg" alt="Linux">
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-orange.svg" alt="Windows | Linux">
   <img src="https://img.shields.io/badge/License-MIT-purple.svg" alt="MIT License">
 </p>
 
@@ -31,41 +31,48 @@
 - 🛡️ **Client-Side Blacklist**: Filter out unwanted tags locally without leaking rules to the network.
 - 💾 **SQLite Download History**: Tracks downloaded IDs to skip duplicates even across renames or directory changes; verifies MD5 checksums.
 - 📂 **Flexible Organization Modes**: Organize files by search query, artist, pool, species, character, copyright, rating, or flat.
+- 🪟 **Cross-Platform (Windows & Linux)**: Native installers, desktop shortcuts, and dedicated launchers for both platforms.
 - 🌐 **Polite API Client**: Complies strictly with e621's 1 req/sec rate limit policy and provides a built-in connection diagnostic tester.
 
 ---
 
 ## Installation & Setup
 
-### Quick Install (Menu & Desktop Shortcut)
+### 🪟 Windows Setup
 
-Run the included installer to automatically create your virtual environment, install icons, and add an application shortcut to your desktop and launcher menu:
+1. **Prerequisite**: Ensure [Python 3.10+](https://www.python.org/downloads/) is installed and **"Add python.exe to PATH"** was checked during installation.
+2. **Download / Clone**:
+   ```cmd
+   git clone https://github.com/morganlowe/E621-cruiser.git
+   cd E621-cruiser
+   ```
+3. **Install Shortcuts**: Double-click or run:
+   ```cmd
+   install.bat
+   ```
+   *This automatically creates the `.venv`, installs PySide6, and adds an **E621 Cruiser** shortcut on your Desktop and in your Start Menu.*
+4. **Quick Launch**: Double-click `run.bat` or use the Desktop shortcut.
 
-```bash
-git clone https://github.com/morganlowe/E621-cruiser.git
-cd E621-cruiser
-./install.sh
-```
+---
 
-Once installed, you can launch E621 Cruiser from your desktop environment's application menu, from the desktop shortcut, or from the terminal:
-```bash
-e621-cruiser
-```
+### 🐧 Linux Setup
 
-### Manual Run
-
-To run directly without installing system shortcuts:
-```bash
-./run.sh
-```
-*The launcher automatically initializes a `.venv` on the first run (reusing system PySide6 if available).*
-
-### Uninstallation
-
-To remove desktop shortcuts, icons, and command line links:
-```bash
-./uninstall.sh
-```
+1. **Quick Install (Desktop & Menu Shortcut)**:
+   ```bash
+   git clone https://github.com/morganlowe/E621-cruiser.git
+   cd E621-cruiser
+   ./install.sh
+   ```
+   *Places an **E621 Cruiser** shortcut on your Desktop and in your application launcher (`~/.local/share/applications`).*
+2. **Command Line / Direct Launch**:
+   ```bash
+   e621-cruiser     # from anywhere via ~/.local/bin
+   ./run.sh         # or directly inside the repository
+   ```
+3. **Uninstall Shortcuts**:
+   ```bash
+   ./uninstall.sh
+   ```
 
 ---
 

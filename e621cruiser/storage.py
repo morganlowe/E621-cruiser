@@ -25,11 +25,19 @@ ORGANIZE_MODES: list[tuple[str, str]] = [
 RATING_NAMES = {"s": "safe", "q": "questionable", "e": "explicit"}
 
 _BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 
 def sanitize(name: str, maxlen: int = 120) -> str:
     name = _BAD_CHARS.sub("_", name).strip(" .")
-    return name[:maxlen].rstrip(" .") or "_"
+    clean = name[:maxlen].rstrip(" .") or "_"
+    if clean.upper() in _WINDOWS_RESERVED:
+        clean = f"_{clean}_"
+    return clean
 
 
 @dataclass

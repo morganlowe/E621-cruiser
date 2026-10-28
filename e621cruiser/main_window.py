@@ -40,7 +40,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("E621 Cruiser")
-        icon_path = Path(__file__).resolve().parent.parent / "assets" / "e621-cruiser.png"
+        assets = Path(__file__).resolve().parent.parent / "assets"
+        icon_path = (assets / "e621-cruiser.ico") if (assets / "e621-cruiser.ico").exists() else (assets / "e621-cruiser.png")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
