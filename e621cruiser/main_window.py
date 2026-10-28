@@ -36,6 +36,94 @@ class Source:
     pool: Pool | None = None
 
 
+@dataclass
+class TabSnapshot:
+    source: Source
+    posts: list[Post]
+    page: int
+    exhausted: bool
+    hidden: int
+    scroll_pos: int
+
+
+class ResultTab(QWidget):
+    back_requested = Signal()
+    forward_requested = Signal()
+    download_pool_requested = Signal()
+
+    def __init__(self, source: Source | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.source = source or Source("search", "latest", "")
+        self.page = 1
+        self.gen = 0
+        self.exhausted = True
+        self.loading = False
+        self.hidden = 0
+        self.history_back: list[TabSnapshot] = []
+        self.history_forward: list[TabSnapshot] = []
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+
+        nav_bar = QHBoxLayout()
+        nav_bar.setContentsMargins(6, 4, 6, 2)
+        nav_bar.setSpacing(6)
+
+        self.btn_back = QPushButton("< Back")
+        self.btn_back.setToolTip("Go back to previous view (Alt+Left)")
+        self.btn_back.setEnabled(False)
+        self.btn_back.setStyleSheet("padding: 4px 10px; font-weight: bold;")
+        self.btn_back.clicked.connect(self.back_requested)
+
+        self.btn_forward = QPushButton("Forward >")
+        self.btn_forward.setToolTip("Go forward (Alt+Right)")
+        self.btn_forward.setEnabled(False)
+        self.btn_forward.setStyleSheet("padding: 4px 10px; font-weight: bold;")
+        self.btn_forward.clicked.connect(self.forward_requested)
+
+        self.result_label = QLabel("Search for tags or open a pool to get started.")
+        self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.result_label.setStyleSheet("padding: 0 4px; font-size: 13px; color: #d7dae0;")
+
+        self.btn_dl_pool = QPushButton("Download Pool")
+        self.btn_dl_pool.setToolTip("Download all posts in this pool")
+        self.btn_dl_pool.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                padding: 4px 14px;
+                background-color: #2e7d32;
+                color: #ffffff;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        self.btn_dl_pool.setVisible(False)
+        self.btn_dl_pool.clicked.connect(self.download_pool_requested)
+
+        nav_bar.addWidget(self.btn_back)
+        nav_bar.addWidget(self.btn_forward)
+        nav_bar.addWidget(self.result_label, 1)
+        nav_bar.addWidget(self.btn_dl_pool)
+
+        self.grid = PostGrid()
+
+        lay.addLayout(nav_bar)
+        lay.addWidget(self.grid, 1)
+
+    def update_nav_buttons(self) -> None:
+        self.btn_back.setEnabled(bool(self.history_back))
+        self.btn_forward.setEnabled(bool(self.history_forward))
+        is_pool = self.source.kind == "pool"
+        self.btn_dl_pool.setVisible(is_pool)
+        if is_pool and self.source.pool:
+            self.btn_dl_pool.setText(f"Download Pool ({self.source.pool.post_count} posts)")
+        else:
+            self.btn_dl_pool.setText("Download Pool")
+
+
 class MainWindow(QMainWindow):
     fetch_status = Signal(str)  # emitted from worker threads
 
@@ -56,14 +144,9 @@ class MainWindow(QMainWindow):
         self.client = E621Client()
         self.blacklist = Blacklist(full_blacklist(self.settings))
 
-        self._gen = 0
-        self._page = 1
-        self._exhausted = True
-        self._loading = False
-        self._hidden = 0
-        self._source = Source("search", "")
         self._stop_fetch = False
         self._preview_dlg: PreviewDialog | None = None
+        self._cached_thumbs: dict[int, QImage] = {}
 
         self._build_ui()
         self._load_settings_into_ui()
@@ -78,6 +161,70 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(QByteArray.fromBase64(self.settings.window_geometry.encode()))
 
         QTimer.singleShot(100, self._initial_connect)
+
+    # ============================================================== tab delegation
+    @property
+    def current_tab(self) -> ResultTab:
+        tab = self.results_tabs.currentWidget()
+        if not isinstance(tab, ResultTab):
+            return self._default_tab
+        return tab
+
+    @property
+    def grid(self) -> PostGrid:
+        return self.current_tab.grid
+
+    @property
+    def _source(self) -> Source:
+        return self.current_tab.source
+
+    @_source.setter
+    def _source(self, val: Source) -> None:
+        self.current_tab.source = val
+
+    @property
+    def _page(self) -> int:
+        return self.current_tab.page
+
+    @_page.setter
+    def _page(self, val: int) -> None:
+        self.current_tab.page = val
+
+    @property
+    def _gen(self) -> int:
+        return self.current_tab.gen
+
+    @_gen.setter
+    def _gen(self, val: int) -> None:
+        self.current_tab.gen = val
+
+    @property
+    def _exhausted(self) -> bool:
+        return self.current_tab.exhausted
+
+    @_exhausted.setter
+    def _exhausted(self, val: bool) -> None:
+        self.current_tab.exhausted = val
+
+    @property
+    def _loading(self) -> bool:
+        return self.current_tab.loading
+
+    @_loading.setter
+    def _loading(self, val: bool) -> None:
+        self.current_tab.loading = val
+
+    @property
+    def _hidden(self) -> int:
+        return self.current_tab.hidden
+
+    @_hidden.setter
+    def _hidden(self, val: int) -> None:
+        self.current_tab.hidden = val
+
+    @property
+    def result_label(self) -> QLabel:
+        return self.current_tab.result_label
 
     # =============================================================== UI setup
     def _build_ui(self) -> None:
@@ -108,17 +255,22 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_search_tab(), "Search")
         self.tabs.addTab(self._build_pools_tab(), "Pools")
         self.tabs.addTab(self._build_favs_tab(), "Favorites")
-        self.tabs.setMinimumWidth(260)
+        self.tabs.setMinimumWidth(350)
 
-        # ---- center: grid
-        self.grid = PostGrid()
-        self.grid.near_bottom.connect(self._load_next_page)
-        self.grid.post_clicked.connect(self._preview)
-        self.grid.itemDoubleClicked.connect(lambda it: self._preview(self.grid.post_for(it)))
-        self.grid.itemSelectionChanged.connect(self._update_selection_label)
-        self.grid.currentItemChanged.connect(self._on_grid_current_changed)
-        self.grid.customContextMenuRequested.connect(self._grid_menu)
-        self.result_label = QLabel("Search for tags or open a pool to get started.")
+        # ---- center: tabs of result views
+        self.results_tabs = QTabWidget()
+        self.results_tabs.setTabsClosable(True)
+        self.results_tabs.setMovable(True)
+        self.results_tabs.tabCloseRequested.connect(self._close_tab)
+        self.results_tabs.currentChanged.connect(self._on_tab_changed)
+
+        new_tab_btn = QPushButton("+")
+        new_tab_btn.setToolTip("Open new tab (Ctrl+T)")
+        new_tab_btn.setStyleSheet("font-weight: bold; font-size: 14px; padding: 2px 8px;")
+        new_tab_btn.clicked.connect(lambda: self._new_empty_tab())
+        self.results_tabs.setCornerWidget(new_tab_btn, Qt.Corner.TopRightCorner)
+
+        self._default_tab = self._create_tab(Source("search", "latest", ""), "Search")
 
         # ---- bottom: download panel
         dl_box = QGroupBox("Download")
@@ -135,9 +287,9 @@ class MainWindow(QMainWindow):
         self.tags_file_cb.toggled.connect(lambda v: setattr(self.settings, "write_tags_file", v))
 
         sel_all = QPushButton("Select all")
-        sel_all.clicked.connect(self.grid.selectAll)
+        sel_all.clicked.connect(lambda: self.grid.selectAll())
         sel_none = QPushButton("Select none")
-        sel_none.clicked.connect(self.grid.clearSelection)
+        sel_none.clicked.connect(lambda: self.grid.clearSelection())
         self.dl_sel_btn = QPushButton("Download selected (0)")
         self.dl_sel_btn.setShortcut(QKeySequence("Ctrl+D"))
         self.dl_sel_btn.clicked.connect(self._download_selected)
@@ -181,8 +333,8 @@ class MainWindow(QMainWindow):
         center_widget = QWidget()
         rl = QVBoxLayout(center_widget)
         rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(self.result_label)
-        rl.addWidget(self.grid, 1)
+        rl.setSpacing(0)
+        rl.addWidget(self.results_tabs, 1)
         rl.addWidget(dl_box)
 
         # ---- right: tag inspector
@@ -192,10 +344,32 @@ class MainWindow(QMainWindow):
         self.inspector.tag_search_requested.connect(self._search_only_tag)
         self.inspector.preview_requested.connect(self._preview)
         self.inspector.download_requested.connect(lambda p: self._enqueue([p]))
-        self.inspector.view_pool_requested.connect(self._open_pool_by_id)
+        self.inspector.view_pool_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=False))
+        self.inspector.view_pool_new_tab_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=True))
         self.inspector.download_pool_requested.connect(self._download_pool_by_id)
         self.inspector.setMinimumWidth(260)
         self.tabs.setMinimumWidth(350)
+
+        # Global shortcuts for tab navigation
+        back_act = QAction(self)
+        back_act.setShortcut(QKeySequence("Alt+Left"))
+        back_act.triggered.connect(self._navigate_back)
+        self.addAction(back_act)
+
+        fwd_act = QAction(self)
+        fwd_act.setShortcut(QKeySequence("Alt+Right"))
+        fwd_act.triggered.connect(self._navigate_forward)
+        self.addAction(fwd_act)
+
+        new_tab_act = QAction(self)
+        new_tab_act.setShortcut(QKeySequence("Ctrl+T"))
+        new_tab_act.triggered.connect(self._new_empty_tab)
+        self.addAction(new_tab_act)
+
+        close_tab_act = QAction(self)
+        close_tab_act.setShortcut(QKeySequence("Ctrl+W"))
+        close_tab_act.triggered.connect(self._close_current_tab)
+        self.addAction(close_tab_act)
 
         self.split = QSplitter()
         self.split.addWidget(self.tabs)
@@ -374,7 +548,10 @@ class MainWindow(QMainWindow):
         self.pool_list.itemDoubleClicked.connect(lambda it: self._open_pool(it.data(Qt.ItemDataRole.UserRole)))
         open_btn = QPushButton("Show pool")
         open_btn.clicked.connect(self._open_selected_pool)
-        dl_btn = QPushButton("Download whole pool")
+        open_tab_btn = QPushButton("+ New Tab")
+        open_tab_btn.setToolTip("Open pool in a new tab")
+        open_tab_btn.clicked.connect(lambda: self._open_selected_pool(new_tab=True))
+        dl_btn = QPushButton("Download pool")
         dl_btn.setStyleSheet("font-weight: bold;")
         dl_btn.clicked.connect(self._download_selected_pool)
         row = QHBoxLayout()
@@ -384,6 +561,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.pool_list, 1)
         r2 = QHBoxLayout()
         r2.addWidget(open_btn)
+        r2.addWidget(open_tab_btn)
         r2.addWidget(dl_btn)
         lay.addLayout(r2)
         tip = QLabel("<small>Pools are saved to <b>pools/&lt;name&gt; (id)/</b> with pages "
@@ -519,7 +697,6 @@ class MainWindow(QMainWindow):
         self._save_ui_to_settings()
         self.settings.save()
         e.accept()
-        QApplication.instance().quit()
 
     # ================================================================ search
     def _compose_query(self, base: str) -> str:
@@ -559,8 +736,132 @@ class MainWindow(QMainWindow):
                             on_result=lambda tags: self.tag_edit.set_suggestions(token, tags),
                             on_error=lambda e: None)
 
+    # ============================================================== tab management
+    def _create_tab(self, source: Source, title: str = "Search") -> ResultTab:
+        tab = ResultTab(source=source)
+        tab.back_requested.connect(self._navigate_back)
+        tab.forward_requested.connect(self._navigate_forward)
+        tab.download_pool_requested.connect(self._download_current_pool)
+        tab.grid.itemDoubleClicked.connect(lambda it: self._preview(tab.grid.post_for(it)))
+        tab.grid.customContextMenuRequested.connect(self._grid_menu)
+        tab.grid.itemSelectionChanged.connect(self._update_selection_label)
+        tab.grid.currentItemChanged.connect(self._on_grid_current_changed)
+        tab.grid.near_bottom.connect(self._load_next_page)
+
+        idx = self.results_tabs.addTab(tab, title)
+        self.results_tabs.setCurrentIndex(idx)
+        return tab
+
+    def _close_tab(self, index: int) -> None:
+        if self.results_tabs.count() <= 1:
+            tab = self.current_tab
+            tab.history_back.clear()
+            tab.history_forward.clear()
+            self._begin(Source("search", "latest", ""))
+            return
+        widget = self.results_tabs.widget(index)
+        self.results_tabs.removeTab(index)
+        if widget:
+            widget.deleteLater()
+
+    def _close_current_tab(self) -> None:
+        idx = self.results_tabs.currentIndex()
+        if idx >= 0:
+            self._close_tab(idx)
+
+    def _new_empty_tab(self) -> ResultTab:
+        tab = self._create_tab(Source("search", "latest", ""), "New Tab")
+        self.tag_edit.setFocus()
+        return tab
+
+    def _on_tab_changed(self, idx: int) -> None:
+        if idx < 0:
+            return
+        tab = self.current_tab
+        if hasattr(self, "dl_sel_btn"):
+            self._update_selection_label()
+        curr = tab.grid.currentItem()
+        if hasattr(self, "inspector"):
+            self._on_grid_current_changed(curr)
+
+    def _update_tab_title(self, tab: ResultTab) -> None:
+        idx = self.results_tabs.indexOf(tab)
+        if idx < 0:
+            return
+        s = tab.source
+        if s.kind == "pool" and s.pool:
+            title = f"Pool: {s.pool.display_name[:20]}"
+        elif s.kind == "favorites":
+            title = f"Fav: {s.label.removeprefix('favorites_')[:20]}"
+        elif s.query:
+            title = s.query[:20]
+        else:
+            title = "Latest"
+        self.results_tabs.setTabText(idx, title)
+        self.results_tabs.setTabToolTip(idx, f"{s.kind.capitalize()}: {s.label or s.query}")
+
+    # ============================================================== navigation history
+    def _save_current_snapshot(self) -> TabSnapshot:
+        tab = self.current_tab
+        posts = tab.grid.all_posts()
+        scroll_pos = tab.grid.verticalScrollBar().value()
+        return TabSnapshot(
+            source=tab.source,
+            posts=posts,
+            page=tab.page,
+            exhausted=tab.exhausted,
+            hidden=tab.hidden,
+            scroll_pos=scroll_pos,
+        )
+
+    def _restore_snapshot(self, tab: ResultTab, snap: TabSnapshot) -> None:
+        tab.gen += 1
+        self._stop_fetch = True
+        tab.source = snap.source
+        tab.page = snap.page
+        tab.exhausted = snap.exhausted
+        tab.hidden = snap.hidden
+        tab.loading = False
+        tab.grid.clear_posts()
+        self.inspector.set_post(None)
+
+        if snap.posts:
+            tab.grid.add_posts(snap.posts, {p.id for p in snap.posts if self.history.has(p.id)})
+            for p in snap.posts:
+                if p.id in self._cached_thumbs:
+                    tab.grid.set_thumbnail(p.id, self._cached_thumbs[p.id])
+                elif p.preview_url:
+                    self.thumbs.submit(fetch_image, p.preview_url,
+                                       on_result=partial(self._on_thumb, tab.gen, p.id),
+                                       on_error=lambda e: None)
+            tab.grid.verticalScrollBar().setValue(snap.scroll_pos)
+
+        tab.update_nav_buttons()
+        self._update_tab_title(tab)
+        self._update_result_label()
+        self._update_selection_label()
+
+    def _navigate_back(self) -> None:
+        tab = self.current_tab
+        if not tab.history_back:
+            return
+        current_snap = self._save_current_snapshot()
+        tab.history_forward.append(current_snap)
+        prev_snap = tab.history_back.pop()
+        self._restore_snapshot(tab, prev_snap)
+
+    def _navigate_forward(self) -> None:
+        tab = self.current_tab
+        if not tab.history_forward:
+            return
+        current_snap = self._save_current_snapshot()
+        tab.history_back.append(current_snap)
+        next_snap = tab.history_forward.pop()
+        self._restore_snapshot(tab, next_snap)
+
+    # ============================================================== search & load
     def _start_search(self, raw: str | bool | None = None, label: str | None = None,
-                      kind: str = "search") -> None:
+                      kind: str = "search", new_tab: bool = False) -> None:
         if raw is None or isinstance(raw, bool):
             raw = self.tag_edit.text().strip()
         else:
@@ -568,21 +869,31 @@ class MainWindow(QMainWindow):
         if not any((self.cb_s.isChecked(), self.cb_q.isChecked(), self.cb_e.isChecked())):
             QMessageBox.warning(self, "No rating", "Select at least one rating.")
             return
-        self._begin(Source(kind, label or raw or "latest", self._compose_query(raw)))
+        self._begin(Source(kind, label or raw or "latest", self._compose_query(raw)), new_tab=new_tab)
         self._exhausted = False
         self._load_next_page()
 
-    def _begin(self, source: Source) -> None:
-        self._gen += 1
+    def _begin(self, source: Source, new_tab: bool = False) -> None:
+        if new_tab:
+            tab = self._create_tab(source, "Loading…")
+        else:
+            tab = self.current_tab
+            if tab.grid.count() > 0 or (tab.source and tab.source.query):
+                tab.history_back.append(self._save_current_snapshot())
+                tab.history_forward.clear()
+
+        tab.gen += 1
         self._stop_fetch = True
         self.thumbs.clear_pending()
-        self.grid.clear_posts()
+        tab.grid.clear_posts()
         self.inspector.set_post(None)
-        self._source = source
-        self._page = 1
-        self._hidden = 0
-        self._loading = False
-        self._exhausted = True
+        tab.source = source
+        tab.page = 1
+        tab.hidden = 0
+        tab.loading = False
+        tab.exhausted = True
+        tab.update_nav_buttons()
+        self._update_tab_title(tab)
         self._update_result_label()
 
     def _load_next_page(self) -> None:
@@ -608,20 +919,24 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(50, self._load_next_page)
 
     def _show_posts(self, posts: list[Post]) -> None:
+        tab = self.current_tab
         kept, hidden = self.blacklist.filter(posts)
         for p in kept:
             self.tag_edit.learn_post_tags(p)
-        self._hidden += hidden
-        added = self.grid.add_posts(kept, {p.id for p in kept if self.history.has(p.id)})
-        gen = self._gen
+        tab.hidden += hidden
+        added = tab.grid.add_posts(kept, {p.id for p in kept if self.history.has(p.id)})
+        gen = tab.gen
         for p in added:
-            if p.preview_url:
+            if p.id in self._cached_thumbs:
+                tab.grid.set_thumbnail(p.id, self._cached_thumbs[p.id])
+            elif p.preview_url:
                 self.thumbs.submit(fetch_image, p.preview_url,
                                    on_result=partial(self._on_thumb, gen, p.id),
                                    on_error=lambda e: None)
         self._update_result_label()
 
     def _on_thumb(self, gen: int, post_id: int, img: QImage) -> None:
+        self._cached_thumbs[post_id] = img
         if gen == self._gen:
             self.grid.set_thumbnail(post_id, img)
             self.inspector.set_thumbnail(post_id, img)
@@ -636,19 +951,22 @@ class MainWindow(QMainWindow):
         self.result_label.setText(f"<span style='color: #e06c75;'>Error loading results: {err}</span>")
 
     def _update_result_label(self) -> None:
-        s = self._source
+        tab = self.current_tab
+        s = tab.source
         if s.kind == "pool" and s.pool:
             head = f"Pool: <b>{s.pool.display_name}</b> ({s.pool.post_count} posts)"
         elif s.kind == "favorites":
             head = f"Favorites of <b>{s.label.removeprefix('favorites_')}</b>"
         else:
             head = f"Search: <b>{s.query or '(latest posts)'}</b>"
-        more = "" if self._exhausted else " (scroll for more)"
-        hidden = f" · {self._hidden} hidden by blacklist" if self._hidden else ""
-        self.result_label.setText(f"{head} · {self.grid.count()} shown{more}{hidden}")
+        more = "" if tab.exhausted else " (scroll for more)"
+        hidden = f" · {tab.hidden} hidden by blacklist" if tab.hidden else ""
+        tab.result_label.setText(f"{head} · {tab.grid.count()} shown{more}{hidden}")
+        tab.update_nav_buttons()
 
     def _update_selection_label(self) -> None:
-        self.dl_sel_btn.setText(f"Download selected ({len(self.grid.selectedItems())})")
+        if hasattr(self, "dl_sel_btn"):
+            self.dl_sel_btn.setText(f"Download selected ({len(self.grid.selectedItems())})")
 
     # --------------------------------------------------------- saved searches
     def _save_search(self) -> None:
@@ -694,12 +1012,12 @@ class MainWindow(QMainWindow):
         it = self.pool_list.currentItem()
         return it.data(Qt.ItemDataRole.UserRole) if it else None
 
-    def _open_selected_pool(self) -> None:
+    def _open_selected_pool(self, new_tab: bool = False) -> None:
         if pool := self._selected_pool():
-            self._open_pool(pool)
+            self._open_pool(pool, new_tab=new_tab)
 
-    def _open_pool(self, pool: Pool) -> None:
-        self._begin(Source("pool", pool.display_name, f"pool:{pool.id}", pool))
+    def _open_pool(self, pool: Pool, new_tab: bool = False) -> None:
+        self._begin(Source("pool", pool.display_name, f"pool:{pool.id}", pool), new_tab=new_tab)
         self.statusBar().showMessage(f"Loading pool {pool.display_name}…")
         self.api.submit(self.client.get_pool_posts, pool,
                         on_result=partial(self._on_pool_posts, self._gen),
@@ -711,9 +1029,17 @@ class MainWindow(QMainWindow):
         self._show_posts(posts)
         self.statusBar().showMessage("Pool loaded", 3000)
 
-    def _open_pool_by_id(self, pool_id: int) -> None:
-        self.api.submit(self.client.get_pool, pool_id, on_result=self._open_pool,
+    def _open_pool_by_id(self, pool_id: int, new_tab: bool = False) -> None:
+        self.api.submit(self.client.get_pool, pool_id,
+                        on_result=lambda pool: self._open_pool(pool, new_tab=new_tab),
                         on_error=partial(self._on_api_error, self._gen))
+
+    def _download_current_pool(self) -> None:
+        s = self._source
+        if s.kind == "pool" and s.pool:
+            self._download_pool_by_id(s.pool.id)
+        else:
+            QMessageBox.information(self, "Not in a pool", "The current view is not a pool.")
 
     def _download_selected_pool(self) -> None:
         pool = self._selected_pool()
@@ -877,7 +1203,8 @@ class MainWindow(QMainWindow):
         dlg.exclude_tag.connect(self._exclude_tag_in_search)
         dlg.search_tag.connect(self._search_only_tag)
         dlg.download.connect(lambda p: self._enqueue([p]))
-        dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid)))
+        dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=False)))
+        dlg.view_pool_new_tab.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=True)))
         dlg.download_pool.connect(lambda pid: self._download_pool_by_id(pid))
         dlg.post_changed.connect(lambda p: self._load_preview_image(dlg, p))
         self._load_preview_image(dlg, post)
@@ -968,6 +1295,7 @@ class MainWindow(QMainWindow):
             menu.addAction(f"Search ONLY artist “{a}”",
                            lambda a=a: self._search_only_tag(a))
         for pid in post.pools[:3]:
-            menu.addAction(f"Open pool #{pid}", lambda pid=pid: self._open_pool_by_id(pid))
+            menu.addAction(f"Open pool #{pid}", lambda pid=pid: self._open_pool_by_id(pid, new_tab=False))
+            menu.addAction(f"Open pool #{pid} in new tab", lambda pid=pid: self._open_pool_by_id(pid, new_tab=True))
             menu.addAction(f"Download pool #{pid}", lambda pid=pid: self._download_pool_by_id(pid))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

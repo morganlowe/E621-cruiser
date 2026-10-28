@@ -702,6 +702,7 @@ class PostInspector(QWidget):
     preview_requested = Signal(object)
     download_requested = Signal(object)
     view_pool_requested = Signal(int)
+    view_pool_new_tab_requested = Signal(int)
     download_pool_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
@@ -738,12 +739,18 @@ class PostInspector(QWidget):
         self.btn_view_pool.setStyleSheet("color: #a78bfa; font-weight: bold;")
         self.btn_view_pool.clicked.connect(self._emit_view_pool)
 
+        self.btn_tab_pool = QPushButton("+ Tab")
+        self.btn_tab_pool.setToolTip("Open pool in a new tab")
+        self.btn_tab_pool.setStyleSheet("color: #a78bfa; font-weight: bold;")
+        self.btn_tab_pool.clicked.connect(self._emit_view_pool_new_tab)
+
         self.btn_download_pool = QPushButton("Download Pool")
         self.btn_download_pool.setStyleSheet("color: #60a5fa; font-weight: bold;")
         self.btn_download_pool.clicked.connect(self._emit_download_pool)
 
         pool_row = QHBoxLayout()
         pool_row.addWidget(self.btn_view_pool)
+        pool_row.addWidget(self.btn_tab_pool)
         pool_row.addWidget(self.btn_download_pool)
         self.pool_widget = QWidget()
         self.pool_widget.setLayout(pool_row)
@@ -790,6 +797,17 @@ class PostInspector(QWidget):
             menu = QMenu(self)
             for pid in self._current_post.pools:
                 menu.addAction(f"View Pool #{pid}", lambda pid=pid: self.view_pool_requested.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def _emit_view_pool_new_tab(self) -> None:
+        if not self._current_post or not self._current_post.pools:
+            return
+        if len(self._current_post.pools) == 1:
+            self.view_pool_new_tab_requested.emit(self._current_post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self._current_post.pools:
+                menu.addAction(f"Open Pool #{pid} in new tab", lambda pid=pid: self.view_pool_new_tab_requested.emit(pid))
             menu.exec(QCursor.pos())
 
     def _emit_download_pool(self) -> None:
@@ -873,6 +891,7 @@ class PreviewDialog(QDialog):
     download = Signal(object)
     post_changed = Signal(object)
     view_pool = Signal(int)
+    view_pool_new_tab = Signal(int)
     download_pool = Signal(int)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
@@ -920,6 +939,11 @@ class PreviewDialog(QDialog):
         self.pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa;")
         self.pool_view_btn.clicked.connect(self._on_view_pool_clicked)
 
+        self.pool_tab_btn = QPushButton("Open in New Tab")
+        self.pool_tab_btn.setToolTip("Open pool in a new background tab")
+        self.pool_tab_btn.setStyleSheet("font-weight: bold; color: #a78bfa;")
+        self.pool_tab_btn.clicked.connect(self._on_view_pool_new_tab_clicked)
+
         self.pool_dl_btn = QPushButton("Download Pool")
         self.pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa;")
         self.pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
@@ -938,6 +962,7 @@ class PreviewDialog(QDialog):
         top_bar.addWidget(self.fs_btn)
         top_bar.addWidget(self.dl_btn)
         top_bar.addWidget(self.pool_view_btn)
+        top_bar.addWidget(self.pool_tab_btn)
         top_bar.addWidget(self.pool_dl_btn)
         top_bar.addWidget(self.web_btn)
         top_bar.addWidget(self.close_btn)
@@ -956,12 +981,18 @@ class PreviewDialog(QDialog):
         self.side_pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa; padding: 5px;")
         self.side_pool_view_btn.clicked.connect(self._on_view_pool_clicked)
 
+        self.side_pool_tab_btn = QPushButton("+ Tab")
+        self.side_pool_tab_btn.setToolTip("Open pool in a new tab")
+        self.side_pool_tab_btn.setStyleSheet("font-weight: bold; color: #a78bfa; padding: 5px;")
+        self.side_pool_tab_btn.clicked.connect(self._on_view_pool_new_tab_clicked)
+
         self.side_pool_dl_btn = QPushButton("Download Pool")
         self.side_pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa; padding: 5px;")
         self.side_pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
 
         side_pool_row = QHBoxLayout()
         side_pool_row.addWidget(self.side_pool_view_btn)
+        side_pool_row.addWidget(self.side_pool_tab_btn)
         side_pool_row.addWidget(self.side_pool_dl_btn)
         self.side_pool_widget = QWidget()
         self.side_pool_widget.setLayout(side_pool_row)
@@ -1052,6 +1083,7 @@ class PreviewDialog(QDialog):
 
         has_pools = bool(post.pools)
         self.pool_view_btn.setVisible(has_pools)
+        self.pool_tab_btn.setVisible(has_pools)
         self.pool_dl_btn.setVisible(has_pools)
         self.side_pool_widget.setVisible(has_pools)
         if has_pools:
@@ -1085,6 +1117,17 @@ class PreviewDialog(QDialog):
             menu = QMenu(self)
             for pid in self.post.pools:
                 menu.addAction(f"View Pool #{pid}", lambda pid=pid: self.view_pool.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def _on_view_pool_new_tab_clicked(self) -> None:
+        if not self.post.pools:
+            return
+        if len(self.post.pools) == 1:
+            self.view_pool_new_tab.emit(self.post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self.post.pools:
+                menu.addAction(f"Open Pool #{pid} in new tab", lambda pid=pid: self.view_pool_new_tab.emit(pid))
             menu.exec(QCursor.pos())
 
     def _on_download_pool_clicked(self) -> None:

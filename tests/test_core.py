@@ -120,6 +120,7 @@ class WidgetQueryTests(unittest.TestCase):
         from e621cruiser.main_window import MainWindow
         from e621cruiser.settings import Settings
         w = MainWindow(Settings())
+        w.api.submit = lambda *args, **kwargs: None
         self.assertEqual(w.grid.count(), 0)
         self.assertIn("Search for tags", w.result_label.text())
         w.close()
@@ -128,6 +129,7 @@ class WidgetQueryTests(unittest.TestCase):
         from e621cruiser.main_window import MainWindow
         from e621cruiser.settings import Settings
         w = MainWindow(Settings())
+        w.api.submit = lambda *args, **kwargs: None
         w.tag_edit.setText("wolf")
         # Simulate button clicked passing False as raw argument
         w._start_search(False)
@@ -138,6 +140,7 @@ class WidgetQueryTests(unittest.TestCase):
         from e621cruiser.main_window import MainWindow
         from e621cruiser.settings import Settings
         w = MainWindow(Settings())
+        w.api.submit = lambda *args, **kwargs: None
         w.tag_edit.setText("wolf")
 
         # Set media filter to Drawings only (-animated)
@@ -266,6 +269,71 @@ class WidgetQueryTests(unittest.TestCase):
         self.assertTrue(dlg.pool_dl_btn.isHidden())
         self.assertTrue(dlg.side_pool_widget.isHidden())
         dlg.close()
+        dlg.deleteLater()
+        inspector.deleteLater()
+
+    def test_tabs_and_navigation(self):
+        from e621cruiser.api import Pool
+        from e621cruiser.main_window import MainWindow, ResultTab, Source
+        from e621cruiser.settings import Settings
+
+        w = MainWindow(Settings())
+        w.api.submit = lambda *args, **kwargs: None
+        self.assertEqual(w.results_tabs.count(), 1)
+        initial_tab = w.current_tab
+        self.assertIsInstance(initial_tab, ResultTab)
+        self.assertFalse(initial_tab.btn_back.isEnabled())
+        self.assertFalse(initial_tab.btn_forward.isEnabled())
+        self.assertFalse(initial_tab.btn_dl_pool.isVisible())
+
+        # Create new tab
+        tab2 = w._new_empty_tab()
+        self.assertEqual(w.results_tabs.count(), 2)
+        self.assertEqual(w.current_tab, tab2)
+
+        # Close current tab
+        w._close_current_tab()
+        self.assertEqual(w.results_tabs.count(), 1)
+        self.assertEqual(w.current_tab, initial_tab)
+
+        # Closing the last tab should not delete the tab widget but reset
+        w._close_current_tab()
+        self.assertEqual(w.results_tabs.count(), 1)
+
+        # Add posts and verify back/forward navigation
+        p1 = make_post(id=101)
+        p2 = make_post(id=102)
+        w._show_posts([p1, p2])
+        self.assertEqual(w.grid.count(), 2)
+
+        # Navigate to a pool in same tab
+        test_pool = Pool(id=999, name="Test_Comic", description="", post_ids=[101, 102], category="series")
+        w._open_pool(test_pool, new_tab=False)
+        self.assertEqual(w._source.kind, "pool")
+        self.assertFalse(w.current_tab.btn_dl_pool.isHidden())
+        self.assertIn("Download Pool", w.current_tab.btn_dl_pool.text())
+        self.assertIn("Test Comic", w.result_label.text())
+        self.assertTrue(w.current_tab.btn_back.isEnabled())
+        self.assertFalse(w.current_tab.btn_forward.isEnabled())
+
+        # Test back navigation
+        w._navigate_back()
+        self.assertEqual(w._source.kind, "search")
+        self.assertEqual(w.grid.count(), 2)
+        self.assertTrue(w.current_tab.btn_dl_pool.isHidden())
+        self.assertTrue(w.current_tab.btn_forward.isEnabled())
+
+        # Test forward navigation
+        w._navigate_forward()
+        self.assertEqual(w._source.kind, "pool")
+        self.assertFalse(w.current_tab.btn_dl_pool.isHidden())
+
+        # Open pool in a new tab
+        w._open_pool(test_pool, new_tab=True)
+        self.assertEqual(w.results_tabs.count(), 2)
+        self.assertEqual(w.current_tab.source.kind, "pool")
+
+        w.close()
 
 
 if __name__ == "__main__":
