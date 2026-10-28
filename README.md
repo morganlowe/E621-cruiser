@@ -42,8 +42,8 @@
 Run the included installer to automatically create your virtual environment, install icons, and add an application shortcut to your desktop and launcher menu:
 
 ```bash
-git clone https://github.com/your-username/e621-grabber.git
-cd e621-grabber
+git clone https://github.com/morganlowe/E621-cruiser.git
+cd E621-cruiser
 ./install.sh
 ```
 
