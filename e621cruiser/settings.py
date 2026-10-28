@@ -59,8 +59,11 @@ class Settings:
         return cls(**{k: v for k, v in data.items() if k in known})
 
     def save(self) -> None:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        tmp = SETTINGS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(self), indent=2))
-        os.chmod(tmp, 0o600)  # file contains the API key
-        os.replace(tmp, SETTINGS_FILE)
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = SETTINGS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(asdict(self), indent=2))
+            os.chmod(tmp, 0o600)  # file contains the API key
+            os.replace(tmp, SETTINGS_FILE)
+        except OSError:
+            pass

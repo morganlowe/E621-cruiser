@@ -89,17 +89,21 @@ class History:
     """Remembers which posts were downloaded so they can be skipped/marked."""
 
     def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            old_path = path.parent.parent / "e621-grabber" / path.name
-            if old_path.exists():
-                try:
-                    import shutil
-                    shutil.copy2(old_path, path)
-                except OSError:
-                    pass
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                old_path = path.parent.parent / "e621-grabber" / path.name
+                if old_path.exists():
+                    try:
+                        import shutil
+                        shutil.copy2(old_path, path)
+                    except OSError:
+                        pass
+            db_target = str(path)
+        except OSError:
+            db_target = ":memory:"
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn = sqlite3.connect(db_target, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS downloads ("
             "post_id INTEGER PRIMARY KEY, md5 TEXT, path TEXT, downloaded_at REAL)"
