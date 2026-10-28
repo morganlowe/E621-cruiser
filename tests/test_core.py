@@ -440,6 +440,140 @@ class WidgetQueryTests(unittest.TestCase):
         dlg.deleteLater()
         w.close()
 
+    def test_spank_bank_pools_storage(self):
+        import tempfile
+        from e621cruiser.storage import SpankBank
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            bank = SpankBank(Path(f.name))
+            self.assertEqual(bank.pool_count, 0)
+            self.assertFalse(bank.has_pool(55))
+
+            pool1 = Pool(55, "Test_Comic_1", [101, 102], category="series", description="A fun comic")
+            pool2 = Pool(56, "Test_Comic_2", [201, 202, 203], category="collection")
+
+            # Add pool
+            bank.add_pool(pool1)
+            self.assertTrue(bank.has_pool(55))
+            self.assertEqual(bank.pool_count, 1)
+
+            # Get all pools
+            all_pools = bank.get_all_pools()
+            self.assertEqual(len(all_pools), 1)
+            self.assertEqual(all_pools[0].id, 55)
+            self.assertEqual(all_pools[0].name, "Test_Comic_1")
+            self.assertEqual(all_pools[0].post_count, 2)
+            self.assertEqual(all_pools[0].category, "series")
+
+            # Toggle pool
+            self.assertTrue(bank.toggle_pool(pool2))
+            self.assertEqual(bank.pool_count, 2)
+            self.assertFalse(bank.toggle_pool(pool2))
+            self.assertEqual(bank.pool_count, 1)
+
+            # Remove pool
+            bank.remove_pool(55)
+            self.assertEqual(bank.pool_count, 0)
+            self.assertFalse(bank.has_pool(55))
+
+            # Clear pools
+            bank.add_pool(pool1)
+            bank.add_pool(pool2)
+            self.assertEqual(bank.pool_count, 2)
+            bank.clear_pools()
+            self.assertEqual(bank.pool_count, 0)
+
+    def test_blacklist_persistence(self):
+        import tempfile
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "settings.json"
+            s = Settings.load(cfg_path)
+            s.save()
+
+            w = MainWindow(s)
+            w.api.submit = lambda *args, **kwargs: None
+
+            # Toggle a checkbox directly and verify instant save on disk
+            self.assertIn("gore", w.quick_bl_checkboxes)
+            w.quick_bl_checkboxes["gore"].setChecked(True)
+            self.assertIn("gore", w.settings.quick_blacklist)
+
+            # Verify saved to disk file
+            reloaded = Settings.load(cfg_path)
+            self.assertIn("gore", reloaded.quick_blacklist)
+
+            # Click Select Common
+            w._select_common_blacklist()
+            reloaded = Settings.load(cfg_path)
+            self.assertIn("scat", reloaded.quick_blacklist)
+            self.assertIn("young", reloaded.quick_blacklist)
+
+            # Click Clear All
+            w._clear_quick_blacklist()
+            reloaded = Settings.load(cfg_path)
+            self.assertEqual(reloaded.quick_blacklist, [])
+
+            # Toggle section collapse
+            w._on_blacklist_section_toggled(False)
+            reloaded = Settings.load(cfg_path)
+            self.assertFalse(reloaded.expand_blacklist)
+
+            w.close()
+
+    def test_main_window_spank_bank_pools_ui(self):
+        import tempfile
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_path = Path(tmpdir) / "settings.json"
+            s = Settings.load(cfg_path)
+            w = MainWindow(s)
+            w.api.submit = lambda *args, **kwargs: None
+            w.spank_bank.clear()
+            w.spank_bank.clear_pools()
+
+            pool = Pool(77, "Adventures_of_Fox", [701, 702, 703], category="series")
+
+            # Toggle pool into bank
+            added = w._toggle_pool_in_bank(pool)
+            self.assertTrue(added)
+            self.assertTrue(w.spank_bank.has_pool(77))
+
+            # UI labels and subtabs
+            self.assertIn("1 saved pool", w.bank_pools_summary_label.text())
+            self.assertEqual(w.bank_subtabs.tabText(0), "Pools (1)")
+            self.assertEqual(w.bank_subtabs.tabText(1), "Posts (0)")
+            self.assertEqual(w.bank_pools_list.count(), 1)
+
+            # Check selected pool
+            w.bank_pools_list.setCurrentRow(0)
+            sel_pool = w._selected_bank_saved_pool()
+            self.assertIsNotNone(sel_pool)
+            self.assertEqual(sel_pool.id, 77)
+
+            # Filter pool list
+            w.bank_pools_filter_edit.setText("Fox")
+            self.assertEqual(w.bank_pools_list.count(), 1)
+            w.bank_pools_filter_edit.setText("NonExistent")
+            self.assertEqual(w.bank_pools_list.count(), 0)
+            w.bank_pools_filter_edit.clear()
+            self.assertEqual(w.bank_pools_list.count(), 1)
+
+            # Test pool button in current tab
+            w._open_pool(pool)
+            self.assertEqual(w.current_tab.source.kind, "pool")
+            self.assertEqual(w.current_tab.btn_bank_pool.text(), "In Bank")
+
+            # Toggle out of bank via tab button
+            w._toggle_current_pool_in_bank()
+            self.assertFalse(w.spank_bank.has_pool(77))
+            self.assertEqual(w.current_tab.btn_bank_pool.text(), "+ Bank")
+
+            w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,7 @@ class ResultTab(QWidget):
     forward_requested = Signal()
     download_pool_requested = Signal()
     slideshow_requested = Signal()
+    bank_pool_requested = Signal()
 
     def __init__(self, source: Source | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,6 +104,23 @@ class ResultTab(QWidget):
         """)
         self.btn_slideshow.clicked.connect(self.slideshow_requested)
 
+        self.btn_bank_pool = QPushButton("+ Bank")
+        self.btn_bank_pool.setToolTip("Save this whole pool to Spank Bank for later online viewing")
+        self.btn_bank_pool.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                padding: 4px 12px;
+                background-color: #374151;
+                color: #fbbf24;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #4b5563;
+            }
+        """)
+        self.btn_bank_pool.setVisible(False)
+        self.btn_bank_pool.clicked.connect(self.bank_pool_requested)
+
         self.btn_dl_pool = QPushButton("Download Pool")
         self.btn_dl_pool.setToolTip("Download all posts in this pool")
         self.btn_dl_pool.setStyleSheet("""
@@ -124,6 +142,7 @@ class ResultTab(QWidget):
         nav_bar.addWidget(self.btn_forward)
         nav_bar.addWidget(self.result_label, 1)
         nav_bar.addWidget(self.btn_slideshow)
+        nav_bar.addWidget(self.btn_bank_pool)
         nav_bar.addWidget(self.btn_dl_pool)
 
         self.grid = PostGrid()
@@ -131,10 +150,42 @@ class ResultTab(QWidget):
         lay.addLayout(nav_bar)
         lay.addWidget(self.grid, 1)
 
-    def update_nav_buttons(self) -> None:
+    def update_nav_buttons(self, in_bank: bool = False) -> None:
         self.btn_back.setEnabled(bool(self.history_back))
         self.btn_forward.setEnabled(bool(self.history_forward))
         is_pool = self.source.kind == "pool"
+        self.btn_bank_pool.setVisible(is_pool)
+        if is_pool:
+            if in_bank:
+                self.btn_bank_pool.setText("In Bank")
+                self.btn_bank_pool.setStyleSheet("""
+                    QPushButton {
+                        font-weight: bold;
+                        padding: 4px 12px;
+                        background-color: #d97706;
+                        color: #ffffff;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #b45309;
+                    }
+                """)
+                self.btn_bank_pool.setToolTip("Pool is saved in Spank Bank (click to remove)")
+            else:
+                self.btn_bank_pool.setText("+ Bank")
+                self.btn_bank_pool.setStyleSheet("""
+                    QPushButton {
+                        font-weight: bold;
+                        padding: 4px 12px;
+                        background-color: #374151;
+                        color: #fbbf24;
+                        border-radius: 4px;
+                    }
+                    QPushButton:hover {
+                        background-color: #4b5563;
+                    }
+                """)
+                self.btn_bank_pool.setToolTip("Save this whole pool to Spank Bank for later online viewing")
         self.btn_dl_pool.setVisible(is_pool)
         if is_pool and self.source.pool:
             self.btn_dl_pool.setText(f"Download Pool ({self.source.pool.post_count} posts)")
@@ -365,6 +416,7 @@ class MainWindow(QMainWindow):
         self.inspector.preview_requested.connect(self._preview)
         self.inspector.download_requested.connect(lambda p: self._enqueue([p]))
         self.inspector.bank_toggle_requested.connect(self._toggle_spank_bank)
+        self.inspector.bank_pool_requested.connect(self._toggle_pool_by_id_in_bank)
         self.inspector.view_pool_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=False))
         self.inspector.view_pool_new_tab_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=True))
         self.inspector.download_pool_requested.connect(self._download_pool_by_id)
@@ -529,9 +581,11 @@ class MainWindow(QMainWindow):
 
     def _on_blacklist_section_toggled(self, expanded: bool) -> None:
         self.settings.expand_blacklist = expanded
+        self.settings.save()
 
     def _on_saved_section_toggled(self, expanded: bool) -> None:
         self.settings.expand_saved = expanded
+        self.settings.save()
 
     def _update_blacklist_badge(self) -> None:
         cnt = len(self.settings.quick_blacklist)
@@ -545,17 +599,24 @@ class MainWindow(QMainWindow):
         self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         self.blacklist = Blacklist(full_blacklist(self.settings))
         self._update_blacklist_badge()
+        self.settings.save()
 
     def _select_common_blacklist(self) -> None:
         common = {"gore", "scat", "watersports", "young", "type:swf"}
         for tag, cb in self.quick_bl_checkboxes.items():
             cb.setChecked(tag in common)
+        self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
+        self.blacklist = Blacklist(full_blacklist(self.settings))
         self._update_blacklist_badge()
+        self.settings.save()
 
     def _clear_quick_blacklist(self) -> None:
         for cb in self.quick_bl_checkboxes.values():
             cb.setChecked(False)
+        self.settings.quick_blacklist = []
+        self.blacklist = Blacklist(full_blacklist(self.settings))
         self._update_blacklist_badge()
+        self.settings.save()
 
     def _build_pools_tab(self) -> QWidget:
         w = QWidget()
@@ -567,11 +628,16 @@ class MainWindow(QMainWindow):
         go.clicked.connect(self._search_pools)
         self.pool_list = QListWidget()
         self.pool_list.itemDoubleClicked.connect(lambda it: self._open_pool(it.data(Qt.ItemDataRole.UserRole)))
+        self.pool_list.currentItemChanged.connect(self._on_pool_list_selection_changed)
         open_btn = QPushButton("Show pool")
         open_btn.clicked.connect(self._open_selected_pool)
         open_tab_btn = QPushButton("+ New Tab")
         open_tab_btn.setToolTip("Open pool in a new tab")
         open_tab_btn.clicked.connect(lambda: self._open_selected_pool(new_tab=True))
+        self.btn_pool_tab_bank = QPushButton("+ Bank")
+        self.btn_pool_tab_bank.setToolTip("Save/remove selected pool in Spank Bank")
+        self.btn_pool_tab_bank.setStyleSheet("font-weight: bold; color: #a78bfa;")
+        self.btn_pool_tab_bank.clicked.connect(self._toggle_selected_pool_in_bank)
         dl_btn = QPushButton("Download pool")
         dl_btn.setStyleSheet("font-weight: bold;")
         dl_btn.clicked.connect(self._download_selected_pool)
@@ -583,6 +649,7 @@ class MainWindow(QMainWindow):
         r2 = QHBoxLayout()
         r2.addWidget(open_btn)
         r2.addWidget(open_tab_btn)
+        r2.addWidget(self.btn_pool_tab_bank)
         r2.addWidget(dl_btn)
         lay.addLayout(r2)
         tip = QLabel("<small>Pools are saved to <b>pools/&lt;name&gt; (id)/</b> with pages "
@@ -590,6 +657,23 @@ class MainWindow(QMainWindow):
         tip.setWordWrap(True)
         lay.addWidget(tip)
         return w
+
+    def _on_pool_list_selection_changed(self, current: QListWidgetItem | None, _prev: QListWidgetItem | None = None) -> None:
+        if not hasattr(self, "btn_pool_tab_bank"):
+            return
+        pool = current.data(Qt.ItemDataRole.UserRole) if current else None
+        if pool and self.spank_bank.has_pool(pool.id):
+            self.btn_pool_tab_bank.setText("In Bank")
+            self.btn_pool_tab_bank.setStyleSheet("font-weight: bold; color: #fbbf24;")
+        else:
+            self.btn_pool_tab_bank.setText("+ Bank")
+            self.btn_pool_tab_bank.setStyleSheet("font-weight: bold; color: #a78bfa;")
+
+    def _toggle_selected_pool_in_bank(self) -> None:
+        if pool := self._selected_pool():
+            self._toggle_pool_in_bank(pool)
+            if hasattr(self, "pool_list"):
+                self._on_pool_list_selection_changed(self.pool_list.currentItem())
 
     def _build_favs_tab(self) -> QWidget:
         w = QWidget()
@@ -612,6 +696,79 @@ class MainWindow(QMainWindow):
     def _build_spank_bank_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+
+        self.bank_subtabs = QTabWidget()
+        self.bank_subtabs.addTab(self._build_spank_bank_pools_widget(), "Pools (0)")
+        self.bank_subtabs.addTab(self._build_spank_bank_posts_widget(), "Posts (0)")
+
+        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online pools and posts for later viewing without "
+                     "downloading them locally. Play full-screen slideshows with timers in reading order or shuffle.</small>")
+        tip.setWordWrap(True)
+
+        lay.addWidget(self.bank_subtabs, 1)
+        lay.addWidget(tip)
+
+        QTimer.singleShot(50, self._refresh_spank_bank_ui)
+        return w
+
+    def _build_spank_bank_pools_widget(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 2, 2, 2)
+
+        self.bank_pools_summary_label = QLabel("0 saved pools")
+        self.bank_pools_summary_label.setStyleSheet("font-weight: bold; font-size: 13px; color: #fbbf24;")
+
+        self.bank_pools_filter_edit = QLineEdit()
+        self.bank_pools_filter_edit.setPlaceholderText("Filter saved pools by name or ID…")
+        self.bank_pools_filter_edit.setClearButtonEnabled(True)
+        self.bank_pools_filter_edit.textChanged.connect(self._filter_bank_pools_list)
+
+        self.bank_pools_list = QListWidget()
+        self.bank_pools_list.itemDoubleClicked.connect(self._open_bank_saved_pool_item)
+
+        btn_row1 = QHBoxLayout()
+        view_btn = QPushButton("View Pool")
+        view_btn.setStyleSheet("font-weight: bold;")
+        view_btn.clicked.connect(lambda: self._open_bank_saved_pool(new_tab=False))
+        new_tab_btn = QPushButton("+ New Tab")
+        new_tab_btn.clicked.connect(lambda: self._open_bank_saved_pool(new_tab=True))
+        btn_row1.addWidget(view_btn)
+        btn_row1.addWidget(new_tab_btn)
+
+        btn_row2 = QHBoxLayout()
+        slideshow_order_btn = QPushButton("Play In Order")
+        slideshow_order_btn.setStyleSheet("font-weight: bold; background-color: #1e3a8a; color: white;")
+        slideshow_order_btn.setToolTip("Load pool posts and start full-screen slideshow in reading order")
+        slideshow_order_btn.clicked.connect(lambda: self._play_bank_saved_pool_slideshow(shuffle=False))
+        slideshow_shuffle_btn = QPushButton("Play Shuffle")
+        slideshow_shuffle_btn.setStyleSheet("font-weight: bold; background-color: #7c2d12; color: white;")
+        slideshow_shuffle_btn.setToolTip("Load pool posts and start full-screen slideshow shuffled")
+        slideshow_shuffle_btn.clicked.connect(lambda: self._play_bank_saved_pool_slideshow(shuffle=True))
+        btn_row2.addWidget(slideshow_order_btn)
+        btn_row2.addWidget(slideshow_shuffle_btn)
+
+        btn_row3 = QHBoxLayout()
+        del_btn = QPushButton("Remove selected")
+        del_btn.clicked.connect(self._remove_selected_bank_pools)
+        clear_btn = QPushButton("Clear all pools")
+        clear_btn.clicked.connect(self._clear_bank_pools)
+        btn_row3.addWidget(del_btn)
+        btn_row3.addWidget(clear_btn)
+
+        lay.addWidget(self.bank_pools_summary_label)
+        lay.addWidget(self.bank_pools_filter_edit)
+        lay.addWidget(self.bank_pools_list, 1)
+        lay.addLayout(btn_row1)
+        lay.addLayout(btn_row2)
+        lay.addLayout(btn_row3)
+        return w
+
+    def _build_spank_bank_posts_widget(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 2, 2, 2)
 
         self.bank_summary_label = QLabel("0 saved posts")
         self.bank_summary_label.setStyleSheet("font-weight: bold; font-size: 13px; color: #fbbf24;")
@@ -651,29 +808,30 @@ class MainWindow(QMainWindow):
         btn_row3.addWidget(del_btn)
         btn_row3.addWidget(clear_btn)
 
-        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online posts for later viewing without "
-                     "downloading them locally. Play them full-screen with slideshow timers in sequential or shuffle order.</small>")
-        tip.setWordWrap(True)
-
         lay.addWidget(self.bank_summary_label)
         lay.addWidget(self.bank_filter_edit)
         lay.addWidget(self.bank_list, 1)
         lay.addLayout(btn_row1)
         lay.addLayout(btn_row2)
         lay.addLayout(btn_row3)
-        lay.addWidget(tip)
-
-        QTimer.singleShot(50, self._refresh_spank_bank_ui)
         return w
 
     def _refresh_spank_bank_ui(self) -> None:
-        if not hasattr(self, "bank_list") or not hasattr(self, "bank_summary_label"):
-            return
-        posts = self.spank_bank.get_all()
-        cnt = len(posts)
-        self.bank_summary_label.setText(f"{cnt} saved post{'s' if cnt != 1 else ''}")
-        filter_txt = self.bank_filter_edit.text() if hasattr(self, "bank_filter_edit") else ""
-        self._filter_bank_list(filter_txt)
+        if hasattr(self, "bank_list") and hasattr(self, "bank_summary_label"):
+            posts = self.spank_bank.get_all()
+            cnt = len(posts)
+            self.bank_summary_label.setText(f"{cnt} saved post{'s' if cnt != 1 else ''}")
+            filter_txt = self.bank_filter_edit.text() if hasattr(self, "bank_filter_edit") else ""
+            self._filter_bank_list(filter_txt)
+        if hasattr(self, "bank_pools_list") and hasattr(self, "bank_pools_summary_label"):
+            pools = self.spank_bank.get_all_pools()
+            p_cnt = len(pools)
+            self.bank_pools_summary_label.setText(f"{p_cnt} saved pool{'s' if p_cnt != 1 else ''}")
+            p_filter_txt = self.bank_pools_filter_edit.text() if hasattr(self, "bank_pools_filter_edit") else ""
+            self._filter_bank_pools_list(p_filter_txt)
+        if hasattr(self, "bank_subtabs"):
+            self.bank_subtabs.setTabText(0, f"Pools ({self.spank_bank.pool_count})")
+            self.bank_subtabs.setTabText(1, f"Posts ({len(self.spank_bank)})")
 
     def _filter_bank_list(self, text: str = "") -> None:
         if not hasattr(self, "bank_list"):
@@ -689,6 +847,140 @@ class MainWindow(QMainWindow):
                 it.setData(Qt.ItemDataRole.UserRole, p)
                 it.setToolTip(f"Double-click to open #{p.id}")
                 self.bank_list.addItem(it)
+
+    def _filter_bank_pools_list(self, text: str = "") -> None:
+        if not hasattr(self, "bank_pools_list"):
+            return
+        text = text.lower().strip()
+        self.bank_pools_list.clear()
+        for pool in self.spank_bank.get_all_pools():
+            display = f"#{pool.id} · {pool.display_name} ({pool.post_count} posts)"
+            if not text or text in str(pool.id) or text in pool.name.lower() or text in pool.category.lower():
+                it = QListWidgetItem(display)
+                it.setData(Qt.ItemDataRole.UserRole, pool)
+                it.setToolTip(f"Double-click to open pool #{pool.id}: {pool.display_name}")
+                self.bank_pools_list.addItem(it)
+
+    def _selected_bank_saved_pool(self) -> Pool | None:
+        if not hasattr(self, "bank_pools_list"):
+            return None
+        it = self.bank_pools_list.currentItem()
+        return it.data(Qt.ItemDataRole.UserRole) if it else None
+
+    def _open_bank_saved_pool_item(self, item: QListWidgetItem) -> None:
+        pool = item.data(Qt.ItemDataRole.UserRole)
+        if pool:
+            self._open_pool(pool, new_tab=False)
+
+    def _open_bank_saved_pool(self, new_tab: bool = False) -> None:
+        pool = self._selected_bank_saved_pool()
+        if not pool:
+            QMessageBox.information(self, "No pool selected", "Select a pool in the saved pools list first.")
+            return
+        self._open_pool(pool, new_tab=new_tab)
+
+    def _play_bank_saved_pool_slideshow(self, shuffle: bool = False) -> None:
+        pool = self._selected_bank_saved_pool()
+        if not pool:
+            QMessageBox.information(self, "No pool selected", "Select a pool in the saved pools list first.")
+            return
+        s = self._source
+        if s.kind == "pool" and s.pool and s.pool.id == pool.id and self.grid.count() > 0:
+            posts = self.grid.all_posts()
+            if shuffle:
+                import random
+                shuffled = list(posts)
+                random.shuffle(shuffled)
+                self._preview(shuffled[0], start_slideshow=True, shuffle=True)
+            else:
+                self._preview(posts[0], start_slideshow=True, shuffle=False)
+            return
+
+        self.statusBar().showMessage(f"Loading pool '{pool.display_name}' for slideshow…")
+        def on_posts(posts: list[Post]):
+            filtered_posts, _ = self.blacklist.filter(posts)
+            if not filtered_posts:
+                QMessageBox.information(self, "Empty pool", "No posts available to display in this pool.")
+                return
+            if shuffle:
+                import random
+                shuffled = list(filtered_posts)
+                random.shuffle(shuffled)
+                self._preview(shuffled[0], start_slideshow=True, shuffle=True)
+            else:
+                self._preview(filtered_posts[0], start_slideshow=True, shuffle=False)
+
+        self.api.submit(self.client.get_pool_posts, pool,
+                        on_result=on_posts,
+                        on_error=partial(self._on_api_error, self._gen))
+
+    def _remove_selected_bank_pools(self) -> None:
+        items = self.bank_pools_list.selectedItems()
+        if not items:
+            return
+        for it in items:
+            p = it.data(Qt.ItemDataRole.UserRole)
+            if p:
+                self.spank_bank.remove_pool(p.id)
+                self._update_all_pool_bank_indicators(p.id, False)
+        self._refresh_spank_bank_ui()
+        self.statusBar().showMessage(f"Removed {len(items)} pool(s) from Spank Bank", 3000)
+
+    def _clear_bank_pools(self) -> None:
+        if self.spank_bank.pool_count == 0:
+            return
+        r = QMessageBox.question(self, "Clear Saved Pools",
+                                 f"Are you sure you want to clear all {self.spank_bank.pool_count} saved pools?")
+        if r == QMessageBox.StandardButton.Yes:
+            self.spank_bank.clear_pools()
+            self._refresh_spank_bank_ui()
+            self.statusBar().showMessage("Cleared all saved pools from Spank Bank", 3000)
+
+    def _toggle_pool_in_bank(self, pool: Pool) -> bool:
+        added = self.spank_bank.toggle_pool(pool)
+        self._refresh_spank_bank_ui()
+        self._update_all_pool_bank_indicators(pool.id, added)
+        msg = f"Saved pool '{pool.display_name}' to Spank Bank" if added else f"Removed pool '{pool.display_name}' from Spank Bank"
+        self.statusBar().showMessage(msg, 3000)
+        self._log(msg)
+        return added
+
+    def _toggle_current_pool_in_bank(self) -> None:
+        s = self._source
+        if s.kind == "pool" and s.pool:
+            self._toggle_pool_in_bank(s.pool)
+
+    def _toggle_pool_by_id_in_bank(self, pool_id: int) -> None:
+        if self.spank_bank.has_pool(pool_id):
+            self.spank_bank.remove_pool(pool_id)
+            self._refresh_spank_bank_ui()
+            self._update_all_pool_bank_indicators(pool_id, False)
+            msg = f"Removed pool #{pool_id} from Spank Bank"
+            self.statusBar().showMessage(msg, 3000)
+            self._log(msg)
+        else:
+            s = self._source
+            if s.kind == "pool" and s.pool and s.pool.id == pool_id:
+                self._toggle_pool_in_bank(s.pool)
+            else:
+                self.statusBar().showMessage(f"Fetching pool #{pool_id} metadata…")
+                def on_pool(pool: Pool):
+                    self._toggle_pool_in_bank(pool)
+                self.api.submit(self.client.get_pool, pool_id, on_result=on_pool,
+                                on_error=partial(self._on_api_error, self._gen))
+
+    def _update_all_pool_bank_indicators(self, pool_id: int, in_bank: bool) -> None:
+        tab = self.current_tab
+        if tab.source.kind == "pool" and tab.source.pool and tab.source.pool.id == pool_id:
+            tab.update_nav_buttons(in_bank=in_bank)
+        if hasattr(self, "inspector") and self.inspector._current_post:
+            if pool_id in self.inspector._current_post.pools:
+                self.inspector.set_pool_in_bank(in_bank)
+        if self._preview_dlg and self._preview_dlg.isVisible():
+            if pool_id in self._preview_dlg.post.pools:
+                self._preview_dlg.set_pool_in_bank(in_bank)
+        if hasattr(self, "pool_list") and hasattr(self, "btn_pool_tab_bank"):
+            self._on_pool_list_selection_changed(self.pool_list.currentItem())
 
     def _open_bank_item(self, item: QListWidgetItem) -> None:
         post = item.data(Qt.ItemDataRole.UserRole)
@@ -917,6 +1209,7 @@ class MainWindow(QMainWindow):
         tab.back_requested.connect(self._navigate_back)
         tab.forward_requested.connect(self._navigate_forward)
         tab.download_pool_requested.connect(self._download_current_pool)
+        tab.bank_pool_requested.connect(self._toggle_current_pool_in_bank)
         tab.slideshow_requested.connect(self._start_slideshow)
         tab.grid.itemDoubleClicked.connect(lambda it: self._preview(tab.grid.post_for(it)))
         tab.grid.customContextMenuRequested.connect(self._grid_menu)
@@ -1014,7 +1307,8 @@ class MainWindow(QMainWindow):
                                        on_error=lambda e: None)
             tab.grid.verticalScrollBar().setValue(snap.scroll_pos)
 
-        tab.update_nav_buttons()
+        in_bank = bool(tab.source.kind == "pool" and tab.source.pool and self.spank_bank.has_pool(tab.source.pool.id))
+        tab.update_nav_buttons(in_bank=in_bank)
         self._update_tab_title(tab)
         self._update_result_label()
         self._update_selection_label()
@@ -1142,7 +1436,8 @@ class MainWindow(QMainWindow):
         more = "" if tab.exhausted else " (scroll for more)"
         hidden = f" · {tab.hidden} hidden by blacklist" if tab.hidden else ""
         tab.result_label.setText(f"{head} · {tab.grid.count()} shown{more}{hidden}")
-        tab.update_nav_buttons()
+        in_bank = bool(s.kind == "pool" and s.pool and self.spank_bank.has_pool(s.pool.id))
+        tab.update_nav_buttons(in_bank=in_bank)
 
     def _update_selection_label(self) -> None:
         if hasattr(self, "dl_sel_btn"):
@@ -1372,7 +1667,8 @@ class MainWindow(QMainWindow):
         post = self.grid.post_for(current)
         img = self.grid._images.get(post.id)
         in_bank = self.spank_bank.has(post.id)
-        self.inspector.set_post(post, img, self.tag_edit.text(), in_bank=in_bank)
+        pool_in_bank = any(self.spank_bank.has_pool(pid) for pid in post.pools) if post.pools else False
+        self.inspector.set_post(post, img, self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank)
 
     def _preview(self, post: Post, start_slideshow: bool = False, shuffle: bool = False) -> PreviewDialog:
         all_posts = self.grid.all_posts()
@@ -1380,8 +1676,9 @@ class MainWindow(QMainWindow):
             all_posts = [post]
         idx = all_posts.index(post) if post in all_posts else 0
         in_bank = self.spank_bank.has(post.id)
+        pool_in_bank = any(self.spank_bank.has_pool(pid) for pid in post.pools) if post.pools else False
         dlg = PreviewDialog(post, all_posts=all_posts, index=idx,
-                            active_query=self.tag_edit.text(), in_bank=in_bank,
+                            active_query=self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank,
                             start_slideshow=start_slideshow, shuffle=shuffle, parent=self)
         self._preview_dlg = dlg
         dlg.add_tag.connect(self._toggle_tag_in_search)
@@ -1389,11 +1686,13 @@ class MainWindow(QMainWindow):
         dlg.search_tag.connect(self._search_only_tag)
         dlg.download.connect(lambda p: self._enqueue([p]))
         dlg.bank_toggle.connect(self._toggle_spank_bank)
+        dlg.bank_pool_toggle.connect(self._toggle_pool_by_id_in_bank)
         dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=False)))
         dlg.view_pool_new_tab.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=True)))
         dlg.download_pool.connect(lambda pid: self._download_pool_by_id(pid))
         dlg.post_changed.connect(lambda p: (
             dlg.set_in_bank(self.spank_bank.has(p.id)),
+            dlg.set_pool_in_bank(any(self.spank_bank.has_pool(pid) for pid in p.pools) if p.pools else False),
             self._load_preview_image(dlg, p)
         ))
         self._load_preview_image(dlg, post)
@@ -1494,5 +1793,8 @@ class MainWindow(QMainWindow):
         for pid in post.pools[:3]:
             menu.addAction(f"Open pool #{pid}", lambda pid=pid: self._open_pool_by_id(pid, new_tab=False))
             menu.addAction(f"Open pool #{pid} in new tab", lambda pid=pid: self._open_pool_by_id(pid, new_tab=True))
+            pool_in_bank = self.spank_bank.has_pool(pid)
+            menu.addAction(f"Remove pool #{pid} from Spank Bank" if pool_in_bank else f"Save pool #{pid} to Spank Bank",
+                           lambda pid=pid: self._toggle_pool_by_id_in_bank(pid))
             menu.addAction(f"Download pool #{pid}", lambda pid=pid: self._download_pool_by_id(pid))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

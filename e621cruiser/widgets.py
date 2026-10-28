@@ -704,6 +704,7 @@ class PostInspector(QWidget):
     bank_toggle_requested = Signal(object)
     view_pool_requested = Signal(int)
     view_pool_new_tab_requested = Signal(int)
+    bank_pool_requested = Signal(int)
     download_pool_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
@@ -751,6 +752,11 @@ class PostInspector(QWidget):
         self.btn_tab_pool.setStyleSheet("color: #a78bfa; font-weight: bold;")
         self.btn_tab_pool.clicked.connect(self._emit_view_pool_new_tab)
 
+        self.btn_bank_pool = QPushButton("+ Bank")
+        self.btn_bank_pool.setToolTip("Save/remove pool from Spank Bank")
+        self.btn_bank_pool.setStyleSheet("color: #fbbf24; font-weight: bold;")
+        self.btn_bank_pool.clicked.connect(self._emit_bank_pool)
+
         self.btn_download_pool = QPushButton("Download Pool")
         self.btn_download_pool.setStyleSheet("color: #60a5fa; font-weight: bold;")
         self.btn_download_pool.clicked.connect(self._emit_download_pool)
@@ -758,6 +764,7 @@ class PostInspector(QWidget):
         pool_row = QHBoxLayout()
         pool_row.addWidget(self.btn_view_pool)
         pool_row.addWidget(self.btn_tab_pool)
+        pool_row.addWidget(self.btn_bank_pool)
         pool_row.addWidget(self.btn_download_pool)
         self.pool_widget = QWidget()
         self.pool_widget.setLayout(pool_row)
@@ -828,6 +835,28 @@ class PostInspector(QWidget):
                 menu.addAction(f"Download Pool #{pid}", lambda pid=pid: self.download_pool_requested.emit(pid))
             menu.exec(QCursor.pos())
 
+    def _emit_bank_pool(self) -> None:
+        if not self._current_post or not self._current_post.pools:
+            return
+        if len(self._current_post.pools) == 1:
+            self.bank_pool_requested.emit(self._current_post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self._current_post.pools:
+                menu.addAction(f"Save/Remove Pool #{pid} in Spank Bank",
+                               lambda pid=pid: self.bank_pool_requested.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def set_pool_in_bank(self, in_bank: bool) -> None:
+        if in_bank:
+            self.btn_bank_pool.setText("In Bank")
+            self.btn_bank_pool.setStyleSheet("color: #fbbf24; font-weight: bold;")
+            self.btn_bank_pool.setToolTip("Pool is saved in Spank Bank (click to remove)")
+        else:
+            self.btn_bank_pool.setText("+ Bank")
+            self.btn_bank_pool.setStyleSheet("color: #a78bfa; font-weight: bold;")
+            self.btn_bank_pool.setToolTip("Save pool to Spank Bank")
+
     def _emit_bank_toggle(self) -> None:
         if self._current_post:
             self.bank_toggle_requested.emit(self._current_post)
@@ -846,7 +875,7 @@ class PostInspector(QWidget):
         self.tag_list.filter_text(text)
 
     def set_post(self, post: Post | None, thumb_image: QImage | None = None,
-                 active_query: str = "", in_bank: bool = False) -> None:
+                 active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False) -> None:
         self._current_post = post
         self.filter_edit.clear()
         if post is None:
@@ -858,6 +887,7 @@ class PostInspector(QWidget):
             self.btn_bank.setEnabled(False)
             self.btn_download.setEnabled(False)
             self.set_in_bank(False)
+            self.set_pool_in_bank(False)
             self.pool_widget.setVisible(False)
             self.tag_list.clear()
             return
@@ -868,6 +898,7 @@ class PostInspector(QWidget):
         self.btn_bank.setEnabled(True)
         self.btn_download.setEnabled(True)
         self.set_in_bank(in_bank)
+        self.set_pool_in_bank(pool_in_bank)
 
         if post.pools:
             self.pool_widget.setVisible(True)
@@ -919,10 +950,11 @@ class PreviewDialog(QDialog):
     post_changed = Signal(object)
     view_pool = Signal(int)
     view_pool_new_tab = Signal(int)
+    bank_pool_toggle = Signal(int)
     download_pool = Signal(int)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
-                 active_query: str = "", in_bank: bool = False,
+                 active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False,
                  start_slideshow: bool = False, shuffle: bool = False,
                  parent: QWidget | None = None):
         super().__init__(parent)
@@ -931,6 +963,7 @@ class PreviewDialog(QDialog):
         self.post = self._posts[self._index]
         self._active_query = active_query
         self._in_bank = in_bank
+        self._pool_in_bank = pool_in_bank
         self._image: QImage | None = None
 
         self._slideshow_timer = QTimer(self)
@@ -1033,6 +1066,11 @@ class PreviewDialog(QDialog):
         self.pool_tab_btn.setStyleSheet("font-weight: bold; color: #a78bfa;")
         self.pool_tab_btn.clicked.connect(self._on_view_pool_new_tab_clicked)
 
+        self.pool_bank_btn = QPushButton("+ Bank")
+        self.pool_bank_btn.setToolTip("Save/remove pool from Spank Bank")
+        self.pool_bank_btn.setStyleSheet("font-weight: bold; color: #fbbf24;")
+        self.pool_bank_btn.clicked.connect(self._on_bank_pool_clicked)
+
         self.pool_dl_btn = QPushButton("Download Pool")
         self.pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa;")
         self.pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
@@ -1050,6 +1088,7 @@ class PreviewDialog(QDialog):
         play_bar.addStretch()
         play_bar.addWidget(self.pool_view_btn)
         play_bar.addWidget(self.pool_tab_btn)
+        play_bar.addWidget(self.pool_bank_btn)
         play_bar.addWidget(self.pool_dl_btn)
         play_bar.addWidget(self.web_btn)
 
@@ -1072,6 +1111,11 @@ class PreviewDialog(QDialog):
         self.side_pool_tab_btn.setStyleSheet("font-weight: bold; color: #a78bfa; padding: 5px;")
         self.side_pool_tab_btn.clicked.connect(self._on_view_pool_new_tab_clicked)
 
+        self.side_pool_bank_btn = QPushButton("+ Bank")
+        self.side_pool_bank_btn.setToolTip("Save/remove pool from Spank Bank")
+        self.side_pool_bank_btn.setStyleSheet("font-weight: bold; color: #fbbf24; padding: 5px;")
+        self.side_pool_bank_btn.clicked.connect(self._on_bank_pool_clicked)
+
         self.side_pool_dl_btn = QPushButton("Download Pool")
         self.side_pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa; padding: 5px;")
         self.side_pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
@@ -1079,6 +1123,7 @@ class PreviewDialog(QDialog):
         side_pool_row = QHBoxLayout()
         side_pool_row.addWidget(self.side_pool_view_btn)
         side_pool_row.addWidget(self.side_pool_tab_btn)
+        side_pool_row.addWidget(self.side_pool_bank_btn)
         side_pool_row.addWidget(self.side_pool_dl_btn)
         self.side_pool_widget = QWidget()
         self.side_pool_widget.setLayout(side_pool_row)
@@ -1127,6 +1172,7 @@ class PreviewDialog(QDialog):
         lay.addWidget(self.split, 1)
 
         self.set_in_bank(in_bank)
+        self.set_pool_in_bank(pool_in_bank)
         if shuffle:
             self.combo_slideshow_order.setCurrentText("Shuffle")
         self._update_display()
@@ -1145,6 +1191,25 @@ class PreviewDialog(QDialog):
             self.bank_btn.setStyleSheet("font-weight: bold; padding: 4px 10px;")
             self.side_bank_btn.setText("+ Spank Bank")
             self.side_bank_btn.setStyleSheet("font-weight: bold; padding: 5px;")
+
+    def set_pool_in_bank(self, in_bank: bool) -> None:
+        self._pool_in_bank = in_bank
+        if in_bank:
+            self.pool_bank_btn.setStyleSheet("font-weight: bold; background-color: #d97706; color: #ffffff; padding: 4px 10px; border-radius: 4px;")
+            self.side_pool_bank_btn.setStyleSheet("font-weight: bold; background-color: #d97706; color: #ffffff; padding: 5px; border-radius: 4px;")
+        else:
+            self.pool_bank_btn.setStyleSheet("font-weight: bold; color: #fbbf24; padding: 4px 10px;")
+            self.side_pool_bank_btn.setStyleSheet("font-weight: bold; color: #fbbf24; padding: 5px;")
+        if hasattr(self, "post") and self.post:
+            has_pools = bool(self.post.pools)
+            if has_pools:
+                if len(self.post.pools) == 1:
+                    pid = self.post.pools[0]
+                    txt_b = f"In Bank #{pid}" if self._pool_in_bank else f"+ Bank #{pid}"
+                else:
+                    txt_b = "In Bank…" if self._pool_in_bank else "+ Bank…"
+                self.pool_bank_btn.setText(txt_b)
+                self.side_pool_bank_btn.setText(txt_b)
 
     def _on_bank_clicked(self) -> None:
         self.bank_toggle.emit(self.post)
@@ -1277,6 +1342,7 @@ class PreviewDialog(QDialog):
         has_pools = bool(post.pools)
         self.pool_view_btn.setVisible(has_pools)
         self.pool_tab_btn.setVisible(has_pools)
+        self.pool_bank_btn.setVisible(has_pools)
         self.pool_dl_btn.setVisible(has_pools)
         self.side_pool_widget.setVisible(has_pools)
         if has_pools:
@@ -1284,13 +1350,17 @@ class PreviewDialog(QDialog):
                 pid = post.pools[0]
                 txt_v = f"View Pool #{pid}"
                 txt_d = f"Download Pool #{pid}"
+                txt_b = f"In Bank #{pid}" if self._pool_in_bank else f"+ Bank #{pid}"
             else:
                 txt_v = "View Pool…"
                 txt_d = "Download Pool…"
+                txt_b = "In Bank…" if self._pool_in_bank else "+ Bank…"
             self.pool_view_btn.setText(txt_v)
             self.pool_dl_btn.setText(txt_d)
+            self.pool_bank_btn.setText(txt_b)
             self.side_pool_view_btn.setText(txt_v)
             self.side_pool_dl_btn.setText(txt_d)
+            self.side_pool_bank_btn.setText(txt_b)
 
         self.tag_list.set_post_tags(post.tags, self._active_query)
         self.filter_edit.clear()
@@ -1332,6 +1402,17 @@ class PreviewDialog(QDialog):
             menu = QMenu(self)
             for pid in self.post.pools:
                 menu.addAction(f"Download Pool #{pid}", lambda pid=pid: self.download_pool.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def _on_bank_pool_clicked(self) -> None:
+        if not self.post.pools:
+            return
+        if len(self.post.pools) == 1:
+            self.bank_pool_toggle.emit(self.post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self.post.pools:
+                menu.addAction(f"Save/Remove Pool #{pid} in Spank Bank", lambda pid=pid: self.bank_pool_toggle.emit(pid))
             menu.exec(QCursor.pos())
 
     def _on_tag_clicked(self, tag: str) -> None:

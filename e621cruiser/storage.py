@@ -165,11 +165,23 @@ class SpankBank:
             "data_json TEXT, "
             "added_at REAL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS spank_bank_pools ("
+            "pool_id INTEGER PRIMARY KEY, "
+            "name TEXT, "
+            "post_count INTEGER, "
+            "data_json TEXT, "
+            "added_at REAL)"
+        )
         self._conn.commit()
         self._ids = {r[0] for r in self._conn.execute("SELECT post_id FROM spank_bank")}
+        self._pool_ids = {r[0] for r in self._conn.execute("SELECT pool_id FROM spank_bank_pools")}
 
     def has(self, post_id: int) -> bool:
         return post_id in self._ids
+
+    def has_pool(self, pool_id: int) -> bool:
+        return pool_id in self._pool_ids
 
     def add(self, post: Post) -> None:
         with self._lock:
@@ -181,11 +193,27 @@ class SpankBank:
             self._conn.commit()
             self._ids.add(post.id)
 
+    def add_pool(self, pool: Pool) -> None:
+        with self._lock:
+            data = json.dumps(asdict(pool))
+            self._conn.execute(
+                "INSERT OR REPLACE INTO spank_bank_pools VALUES (?, ?, ?, ?, ?)",
+                (pool.id, pool.name, pool.post_count, data, time.time()),
+            )
+            self._conn.commit()
+            self._pool_ids.add(pool.id)
+
     def remove(self, post_id: int) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM spank_bank WHERE post_id = ?", (post_id,))
             self._conn.commit()
             self._ids.discard(post_id)
+
+    def remove_pool(self, pool_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank_pools WHERE pool_id = ?", (pool_id,))
+            self._conn.commit()
+            self._pool_ids.discard(pool_id)
 
     def toggle(self, post: Post) -> bool:
         if self.has(post.id):
@@ -193,6 +221,14 @@ class SpankBank:
             return False
         else:
             self.add(post)
+            return True
+
+    def toggle_pool(self, pool: Pool) -> bool:
+        if self.has_pool(pool.id):
+            self.remove_pool(pool.id)
+            return False
+        else:
+            self.add_pool(pool)
             return True
 
     def get_all(self) -> list[Post]:
@@ -207,12 +243,34 @@ class SpankBank:
                     pass
             return posts
 
+    def get_all_pools(self) -> list[Pool]:
+        with self._lock:
+            cursor = self._conn.execute("SELECT data_json FROM spank_bank_pools ORDER BY added_at DESC")
+            pools = []
+            for (raw,) in cursor:
+                try:
+                    d = json.loads(raw)
+                    pools.append(Pool(**d))
+                except Exception:
+                    pass
+            return pools
+
     def clear(self) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM spank_bank")
             self._conn.commit()
             self._ids.clear()
 
+    def clear_pools(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank_pools")
+            self._conn.commit()
+            self._pool_ids.clear()
+
     def __len__(self) -> int:
         return len(self._ids)
+
+    @property
+    def pool_count(self) -> int:
+        return len(self._pool_ids)
 

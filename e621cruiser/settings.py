@@ -102,22 +102,28 @@ class Settings:
         return asdict(self)
 
     @classmethod
-    def load(cls) -> "Settings":
-        file_to_read = SETTINGS_FILE
-        if not file_to_read.exists() and (OLD_CONFIG_DIR / "settings.json").exists():
+    def load(cls, path: Path | None = None) -> "Settings":
+        file_to_read = path or SETTINGS_FILE
+        if path is None and not file_to_read.exists() and (OLD_CONFIG_DIR / "settings.json").exists():
             file_to_read = OLD_CONFIG_DIR / "settings.json"
         try:
             data = json.loads(file_to_read.read_text())
         except (OSError, ValueError):
-            return cls()
-        return cls.from_dict(data)
+            inst = cls()
+            object.__setattr__(inst, "_file", path)
+            return inst
+        inst = cls.from_dict(data)
+        object.__setattr__(inst, "_file", path)
+        return inst
 
-    def save(self) -> None:
+    def save(self, path: Path | None = None) -> None:
+        target = path or getattr(self, "_file", None) or SETTINGS_FILE
         try:
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = SETTINGS_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(asdict(self), indent=2))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".tmp")
+            data = {f.name: getattr(self, f.name) for f in fields(self)}
+            tmp.write_text(json.dumps(data, indent=2))
             os.chmod(tmp, 0o600)  # file contains the API key
-            os.replace(tmp, SETTINGS_FILE)
+            os.replace(tmp, target)
         except OSError:
             pass
