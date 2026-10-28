@@ -1,11 +1,12 @@
 """Download history (SQLite) and on-disk path layout."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -145,3 +146,73 @@ class History:
 
     def __len__(self) -> int:
         return len(self._ids)
+
+
+class SpankBank:
+    """Persistent bookmark store for online-viewable posts (no full local files)."""
+
+    def __init__(self, path: Path):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            db_target = str(path)
+        except OSError:
+            db_target = ":memory:"
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(db_target, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS spank_bank ("
+            "post_id INTEGER PRIMARY KEY, "
+            "data_json TEXT, "
+            "added_at REAL)"
+        )
+        self._conn.commit()
+        self._ids = {r[0] for r in self._conn.execute("SELECT post_id FROM spank_bank")}
+
+    def has(self, post_id: int) -> bool:
+        return post_id in self._ids
+
+    def add(self, post: Post) -> None:
+        with self._lock:
+            data = json.dumps(asdict(post))
+            self._conn.execute(
+                "INSERT OR REPLACE INTO spank_bank VALUES (?, ?, ?)",
+                (post.id, data, time.time()),
+            )
+            self._conn.commit()
+            self._ids.add(post.id)
+
+    def remove(self, post_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank WHERE post_id = ?", (post_id,))
+            self._conn.commit()
+            self._ids.discard(post_id)
+
+    def toggle(self, post: Post) -> bool:
+        if self.has(post.id):
+            self.remove(post.id)
+            return False
+        else:
+            self.add(post)
+            return True
+
+    def get_all(self) -> list[Post]:
+        with self._lock:
+            cursor = self._conn.execute("SELECT data_json FROM spank_bank ORDER BY added_at DESC")
+            posts = []
+            for (raw,) in cursor:
+                try:
+                    d = json.loads(raw)
+                    posts.append(Post(**d))
+                except Exception:
+                    pass
+            return posts
+
+    def clear(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank")
+            self._conn.commit()
+            self._ids.clear()
+
+    def __len__(self) -> int:
+        return len(self._ids)
+

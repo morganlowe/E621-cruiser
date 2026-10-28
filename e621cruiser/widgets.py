@@ -6,7 +6,7 @@ import re
 from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPixmap, QStandardItem, QStandardItemModel)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QCompleter, QDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
                                QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLayout,
                                QLineEdit, QListView, QListWidget, QListWidgetItem,
                                QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
@@ -701,6 +701,7 @@ class PostInspector(QWidget):
     tag_search_requested = Signal(str)
     preview_requested = Signal(object)
     download_requested = Signal(object)
+    bank_toggle_requested = Signal(object)
     view_pool_requested = Signal(int)
     view_pool_new_tab_requested = Signal(int)
     download_pool_requested = Signal(int)
@@ -727,11 +728,17 @@ class PostInspector(QWidget):
         self.btn_preview.setEnabled(False)
         self.btn_preview.clicked.connect(self._emit_preview)
 
+        self.btn_bank = QPushButton("+ Bank")
+        self.btn_bank.setEnabled(False)
+        self.btn_bank.setToolTip("Save/remove from Spank Bank for online viewing")
+        self.btn_bank.clicked.connect(self._emit_bank_toggle)
+
         self.btn_download = QPushButton("Download")
         self.btn_download.setEnabled(False)
         self.btn_download.clicked.connect(self._emit_download)
 
         btn_row.addWidget(self.btn_preview)
+        btn_row.addWidget(self.btn_bank)
         btn_row.addWidget(self.btn_download)
 
         # Pool actions
@@ -821,10 +828,25 @@ class PostInspector(QWidget):
                 menu.addAction(f"Download Pool #{pid}", lambda pid=pid: self.download_pool_requested.emit(pid))
             menu.exec(QCursor.pos())
 
+    def _emit_bank_toggle(self) -> None:
+        if self._current_post:
+            self.bank_toggle_requested.emit(self._current_post)
+
+    def set_in_bank(self, in_bank: bool) -> None:
+        if in_bank:
+            self.btn_bank.setText("In Bank")
+            self.btn_bank.setStyleSheet("color: #fbbf24; font-weight: bold;")
+            self.btn_bank.setToolTip("In Spank Bank (click to remove)")
+        else:
+            self.btn_bank.setText("+ Bank")
+            self.btn_bank.setStyleSheet("color: #94a3b8;")
+            self.btn_bank.setToolTip("Save to Spank Bank for online viewing")
+
     def _on_filter_changed(self, text: str) -> None:
         self.tag_list.filter_text(text)
 
-    def set_post(self, post: Post | None, thumb_image: QImage | None = None, active_query: str = "") -> None:
+    def set_post(self, post: Post | None, thumb_image: QImage | None = None,
+                 active_query: str = "", in_bank: bool = False) -> None:
         self._current_post = post
         self.filter_edit.clear()
         if post is None:
@@ -833,7 +855,9 @@ class PostInspector(QWidget):
             self.thumb_label.setText("Select a post")
             self.info_label.setText("Click an image in the grid to view tags.")
             self.btn_preview.setEnabled(False)
+            self.btn_bank.setEnabled(False)
             self.btn_download.setEnabled(False)
+            self.set_in_bank(False)
             self.pool_widget.setVisible(False)
             self.tag_list.clear()
             return
@@ -841,7 +865,9 @@ class PostInspector(QWidget):
         artists = ", ".join(post.artists) or "unknown"
         self.title_label.setText(f"<b>Post #{post.id}</b> · {artists}")
         self.btn_preview.setEnabled(True)
+        self.btn_bank.setEnabled(True)
         self.btn_download.setEnabled(True)
+        self.set_in_bank(in_bank)
 
         if post.pools:
             self.pool_widget.setVisible(True)
@@ -889,19 +915,27 @@ class PreviewDialog(QDialog):
     exclude_tag = Signal(str)
     search_tag = Signal(str)
     download = Signal(object)
+    bank_toggle = Signal(object)
     post_changed = Signal(object)
     view_pool = Signal(int)
     view_pool_new_tab = Signal(int)
     download_pool = Signal(int)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
-                 active_query: str = "", parent: QWidget | None = None):
+                 active_query: str = "", in_bank: bool = False,
+                 start_slideshow: bool = False, shuffle: bool = False,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         self._posts = all_posts if all_posts else [post]
         self._index = max(0, min(len(self._posts) - 1, index))
         self.post = self._posts[self._index]
         self._active_query = active_query
+        self._in_bank = in_bank
         self._image: QImage | None = None
+
+        self._slideshow_timer = QTimer(self)
+        self._slideshow_timer.timeout.connect(self._on_slideshow_tick)
+        self._shuffle_queue: list[int] = []
 
         self.setWindowTitle(f"Post #{self.post.id} - Full Screen View")
         self.resize(1280, 850)
@@ -931,9 +965,64 @@ class PreviewDialog(QDialog):
         self.fs_btn = QPushButton("Fullscreen (F11)")
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
 
+        self.bank_btn = QPushButton("+ Spank Bank (B)")
+        self.bank_btn.setToolTip("Save/remove from Spank Bank for online viewing (B)")
+        self.bank_btn.clicked.connect(self._on_bank_clicked)
+
         self.dl_btn = QPushButton("Download (D)")
         self.dl_btn.setStyleSheet("font-weight: bold; color: #48bb78;")
         self.dl_btn.clicked.connect(lambda: self.download.emit(self.post))
+
+        self.close_btn = QPushButton("Close (Esc)")
+        self.close_btn.clicked.connect(self.close)
+
+        top_bar.addWidget(self.prev_btn)
+        top_bar.addWidget(self.next_btn)
+        top_bar.addWidget(self.counter_label)
+        top_bar.addStretch()
+        top_bar.addWidget(self.tags_toggle_btn)
+        top_bar.addWidget(self.fs_btn)
+        top_bar.addWidget(self.bank_btn)
+        top_bar.addWidget(self.dl_btn)
+        top_bar.addWidget(self.close_btn)
+
+        # Play / pool sub-bar
+        play_bar = QHBoxLayout()
+        self.btn_slideshow = QPushButton("Play Slideshow (Space)")
+        self.btn_slideshow.setCheckable(True)
+        self.btn_slideshow.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                padding: 4px 12px;
+                background-color: #1e3a8a;
+                color: #ffffff;
+                border-radius: 4px;
+            }
+            QPushButton:checked {
+                background-color: #b91c1c;
+                color: #ffffff;
+            }
+        """)
+        self.btn_slideshow.clicked.connect(self._toggle_slideshow_clicked)
+
+        self.combo_slideshow_order = QComboBox()
+        self.combo_slideshow_order.addItems(["In Order", "Shuffle"])
+        self.combo_slideshow_order.setToolTip("Slideshow play order")
+        self.combo_slideshow_order.currentIndexChanged.connect(self._reset_shuffle_queue)
+
+        self.spin_slideshow_sec = QSpinBox()
+        self.spin_slideshow_sec.setRange(1, 300)
+        self.spin_slideshow_sec.setValue(5)
+        self.spin_slideshow_sec.setSuffix(" s")
+        self.spin_slideshow_sec.setToolTip("Slideshow interval in seconds")
+        self.spin_slideshow_sec.valueChanged.connect(self._on_slideshow_interval_changed)
+
+        self.cb_slideshow_loop = QCheckBox("Loop")
+        self.cb_slideshow_loop.setChecked(True)
+        self.cb_slideshow_loop.setToolTip("Loop back to the beginning when finished")
+
+        self.slideshow_status = QLabel("")
+        self.slideshow_status.setStyleSheet("color: #38bdf8; font-size: 12px; padding-left: 6px;")
 
         self.pool_view_btn = QPushButton("View Pool")
         self.pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa;")
@@ -951,21 +1040,18 @@ class PreviewDialog(QDialog):
         self.web_btn = QPushButton("Open on e621")
         self.web_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.post.page_url)))
 
-        self.close_btn = QPushButton("Close (Esc)")
-        self.close_btn.clicked.connect(self.close)
-
-        top_bar.addWidget(self.prev_btn)
-        top_bar.addWidget(self.next_btn)
-        top_bar.addWidget(self.counter_label)
-        top_bar.addStretch()
-        top_bar.addWidget(self.tags_toggle_btn)
-        top_bar.addWidget(self.fs_btn)
-        top_bar.addWidget(self.dl_btn)
-        top_bar.addWidget(self.pool_view_btn)
-        top_bar.addWidget(self.pool_tab_btn)
-        top_bar.addWidget(self.pool_dl_btn)
-        top_bar.addWidget(self.web_btn)
-        top_bar.addWidget(self.close_btn)
+        play_bar.addWidget(self.btn_slideshow)
+        play_bar.addWidget(QLabel("Order:"))
+        play_bar.addWidget(self.combo_slideshow_order)
+        play_bar.addWidget(QLabel("Time:"))
+        play_bar.addWidget(self.spin_slideshow_sec)
+        play_bar.addWidget(self.cb_slideshow_loop)
+        play_bar.addWidget(self.slideshow_status)
+        play_bar.addStretch()
+        play_bar.addWidget(self.pool_view_btn)
+        play_bar.addWidget(self.pool_tab_btn)
+        play_bar.addWidget(self.pool_dl_btn)
+        play_bar.addWidget(self.web_btn)
 
         # Right sidebar (Tags + info)
         self.right_panel = QWidget()
@@ -998,6 +1084,10 @@ class PreviewDialog(QDialog):
         self.side_pool_widget.setLayout(side_pool_row)
         self.side_pool_widget.setVisible(False)
 
+        self.side_bank_btn = QPushButton("+ Spank Bank")
+        self.side_bank_btn.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.side_bank_btn.clicked.connect(self._on_bank_clicked)
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
         self.filter_edit.setClearButtonEnabled(True)
@@ -1014,6 +1104,7 @@ class PreviewDialog(QDialog):
         only_btn.clicked.connect(self._search_selected)
 
         rl.addWidget(self.info_label)
+        rl.addWidget(self.side_bank_btn)
         rl.addWidget(self.side_pool_widget)
         rl.addWidget(QLabel("Tags (click to add/remove from search):"))
         rl.addWidget(self.filter_edit)
@@ -1032,9 +1123,99 @@ class PreviewDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.addLayout(top_bar)
+        lay.addLayout(play_bar)
         lay.addWidget(self.split, 1)
 
+        self.set_in_bank(in_bank)
+        if shuffle:
+            self.combo_slideshow_order.setCurrentText("Shuffle")
         self._update_display()
+        if start_slideshow:
+            QTimer.singleShot(100, self.start_slideshow)
+
+    def set_in_bank(self, in_bank: bool) -> None:
+        self._in_bank = in_bank
+        if in_bank:
+            self.bank_btn.setText("In Bank (B)")
+            self.bank_btn.setStyleSheet("font-weight: bold; background-color: #d97706; color: #ffffff; padding: 4px 10px; border-radius: 4px;")
+            self.side_bank_btn.setText("In Spank Bank")
+            self.side_bank_btn.setStyleSheet("font-weight: bold; background-color: #d97706; color: #ffffff; padding: 5px; border-radius: 4px;")
+        else:
+            self.bank_btn.setText("+ Spank Bank (B)")
+            self.bank_btn.setStyleSheet("font-weight: bold; padding: 4px 10px;")
+            self.side_bank_btn.setText("+ Spank Bank")
+            self.side_bank_btn.setStyleSheet("font-weight: bold; padding: 5px;")
+
+    def _on_bank_clicked(self) -> None:
+        self.bank_toggle.emit(self.post)
+
+    def _reset_shuffle_queue(self) -> None:
+        self._shuffle_queue.clear()
+
+    def _toggle_slideshow_clicked(self, checked: bool) -> None:
+        if checked:
+            self.start_slideshow()
+        else:
+            self.pause_slideshow()
+
+    def start_slideshow(self) -> None:
+        if len(self._posts) <= 1:
+            self.slideshow_status.setText("Only 1 post in view")
+            return
+        self.btn_slideshow.setChecked(True)
+        self.btn_slideshow.setText("Pause Slideshow (Space)")
+        sec = self.spin_slideshow_sec.value()
+        order = self.combo_slideshow_order.currentText()
+        self.slideshow_status.setText(f"Playing ({sec}s · {order})")
+        self._slideshow_timer.start(sec * 1000)
+
+    def pause_slideshow(self) -> None:
+        self.btn_slideshow.setChecked(False)
+        self.btn_slideshow.setText("Play Slideshow (Space)")
+        self.slideshow_status.setText("Paused")
+        self._slideshow_timer.stop()
+
+    def toggle_slideshow(self) -> None:
+        if self._slideshow_timer.isActive():
+            self.pause_slideshow()
+        else:
+            self.start_slideshow()
+
+    def _on_slideshow_interval_changed(self, val: int) -> None:
+        if self._slideshow_timer.isActive():
+            self._slideshow_timer.start(val * 1000)
+            order = self.combo_slideshow_order.currentText()
+            self.slideshow_status.setText(f"Playing ({val}s · {order})")
+
+    def _on_slideshow_tick(self) -> None:
+        order = self.combo_slideshow_order.currentText()
+        if order == "Shuffle":
+            if not self._shuffle_queue:
+                import random
+                idxs = list(range(len(self._posts)))
+                if len(idxs) > 1 and self._index in idxs:
+                    idxs.remove(self._index)
+                random.shuffle(idxs)
+                self._shuffle_queue = idxs
+            if self._shuffle_queue:
+                next_idx = self._shuffle_queue.pop(0)
+                self._index = next_idx
+                self.set_post(self._posts[self._index])
+        else:
+            if self._index < len(self._posts) - 1:
+                self._index += 1
+                self.set_post(self._posts[self._index])
+            else:
+                if self.cb_slideshow_loop.isChecked():
+                    self._index = 0
+                    self.set_post(self._posts[self._index])
+                else:
+                    self.pause_slideshow()
+                    self.slideshow_status.setText("Finished")
+
+    def closeEvent(self, e):  # noqa: N802
+        self._slideshow_timer.stop()
+        super().closeEvent(e)
 
     def _toggle_tags_panel(self, checked: bool) -> None:
         self.right_panel.setVisible(checked)
@@ -1048,12 +1229,24 @@ class PreviewDialog(QDialog):
     def prev_post(self) -> None:
         if self._index > 0:
             self._index -= 1
-            self.set_post(self._posts[self._index])
+        elif self.cb_slideshow_loop.isChecked() and len(self._posts) > 1:
+            self._index = len(self._posts) - 1
+        else:
+            return
+        self.set_post(self._posts[self._index])
+        if self._slideshow_timer.isActive():
+            self._slideshow_timer.start(self.spin_slideshow_sec.value() * 1000)
 
     def next_post(self) -> None:
         if self._index < len(self._posts) - 1:
             self._index += 1
-            self.set_post(self._posts[self._index])
+        elif self.cb_slideshow_loop.isChecked() and len(self._posts) > 1:
+            self._index = 0
+        else:
+            return
+        self.set_post(self._posts[self._index])
+        if self._slideshow_timer.isActive():
+            self._slideshow_timer.start(self.spin_slideshow_sec.value() * 1000)
 
     def set_post(self, post: Post) -> None:
         self.post = post
@@ -1184,11 +1377,20 @@ class PreviewDialog(QDialog):
         if e.key() in (Qt.Key.Key_Right, Qt.Key.Key_D):
             self.next_post()
             return
+        if e.key() == Qt.Key.Key_Space:
+            self.toggle_slideshow()
+            return
+        if e.key() == Qt.Key.Key_B:
+            self._on_bank_clicked()
+            return
+        if e.key() == Qt.Key.Key_S:
+            self.toggle_slideshow()
+            return
+        if e.key() in (Qt.Key.Key_F11, Qt.Key.Key_F):
+            self._toggle_fullscreen()
+            return
         if e.key() == Qt.Key.Key_Escape or e.key() == Qt.Key.Key_Q:
             self.close()
-            return
-        if e.key() == Qt.Key.Key_F11:
-            self._toggle_fullscreen()
             return
         if e.key() == Qt.Key.Key_T:
             self.tags_toggle_btn.setChecked(not self.tags_toggle_btn.isChecked())

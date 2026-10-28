@@ -335,6 +335,111 @@ class WidgetQueryTests(unittest.TestCase):
 
         w.close()
 
+    def test_spank_bank_storage(self):
+        import tempfile
+        from pathlib import Path
+        from e621cruiser.storage import SpankBank
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bank_db = Path(tmpdir) / "spank_bank.db"
+            bank = SpankBank(bank_db)
+            self.assertEqual(len(bank), 0)
+
+            p1 = make_post(id=201)
+            p2 = make_post(id=202)
+
+            self.assertFalse(bank.has(201))
+            bank.add(p1)
+            self.assertTrue(bank.has(201))
+            self.assertEqual(len(bank), 1)
+
+            # Toggle behavior
+            added = bank.toggle(p2)
+            self.assertTrue(added)
+            self.assertTrue(bank.has(202))
+            self.assertEqual(len(bank), 2)
+
+            removed = bank.toggle(p2)
+            self.assertFalse(removed)
+            self.assertFalse(bank.has(202))
+            self.assertEqual(len(bank), 1)
+
+            # Retrieve all posts
+            all_posts = bank.get_all()
+            self.assertEqual(len(all_posts), 1)
+            self.assertEqual(all_posts[0].id, 201)
+
+            # Clear
+            bank.clear()
+            self.assertEqual(len(bank), 0)
+            self.assertFalse(bank.has(201))
+
+    def test_spank_bank_and_slideshow_ui(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        from e621cruiser.widgets import PreviewDialog
+
+        w = MainWindow(Settings())
+        w.api.submit = lambda *args, **kwargs: None
+        w.spank_bank.clear()
+
+        p1 = make_post(id=301)
+        p2 = make_post(id=302)
+        p3 = make_post(id=303)
+
+        # Toggle Spank Bank from MainWindow
+        self.assertFalse(w.spank_bank.has(301))
+        w._toggle_spank_bank(p1)
+        self.assertTrue(w.spank_bank.has(301))
+        self.assertIn("1 saved post", w.bank_summary_label.text())
+
+        # Inspector updates
+        w.inspector.set_post(p1, in_bank=w.spank_bank.has(301))
+        self.assertEqual(w.inspector.btn_bank.text(), "In Bank")
+
+        # Open Spank Bank in a result tab
+        w._open_spank_bank(new_tab=True)
+        self.assertEqual(w.current_tab.source.kind, "spank_bank")
+        self.assertEqual(w.grid.count(), 1)
+        self.assertIn("Spank Bank", w.result_label.text())
+
+        # Test PreviewDialog slideshow controls
+        dlg = PreviewDialog(p1, all_posts=[p1, p2, p3], in_bank=True)
+        self.assertEqual(dlg.bank_btn.text(), "In Bank (B)")
+        self.assertFalse(dlg._slideshow_timer.isActive())
+
+        # Start slideshow
+        dlg.start_slideshow()
+        self.assertTrue(dlg._slideshow_timer.isActive())
+        self.assertIn("Pause Slideshow", dlg.btn_slideshow.text())
+
+        # Tick sequential
+        dlg._on_slideshow_tick()
+        self.assertEqual(dlg.post.id, 302)
+        dlg._on_slideshow_tick()
+        self.assertEqual(dlg.post.id, 303)
+        # Loop back to 0
+        dlg._on_slideshow_tick()
+        self.assertEqual(dlg.post.id, 301)
+
+        # Test Shuffle order
+        dlg.combo_slideshow_order.setCurrentText("Shuffle")
+        dlg._on_slideshow_tick()
+        self.assertIn(dlg.post.id, [301, 302, 303])
+
+        # Test Space key pauses/resumes
+        key_space = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier)
+        dlg.keyPressEvent(key_space)
+        self.assertFalse(dlg._slideshow_timer.isActive())
+        dlg.keyPressEvent(key_space)
+        self.assertTrue(dlg._slideshow_timer.isActive())
+
+        dlg.close()
+        dlg.deleteLater()
+        w.close()
+
 
 if __name__ == "__main__":
     unittest.main()
