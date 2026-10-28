@@ -1,7 +1,7 @@
-# E621 Grabber
+# E621 Cruiser
 
 <p align="center">
-  <img src="assets/e621-grabber.png" alt="E621 Grabber Logo" width="128" height="128">
+  <img src="assets/e621-cruiser.png" alt="E621 Cruiser Logo" width="128" height="128">
 </p>
 
 <p align="center">
@@ -47,9 +47,9 @@ cd E621-cruiser
 ./install.sh
 ```
 
-Once installed, you can launch E621 Grabber from your desktop environment's application menu, from the desktop shortcut, or from the terminal:
+Once installed, you can launch E621 Cruiser from your desktop environment's application menu, from the desktop shortcut, or from the terminal:
 ```bash
-e621-grabber
+e621-cruiser
 ```
 
 ### Manual Run
@@ -80,8 +80,8 @@ Open **File → Settings** (or press `Ctrl+,`):
 2. **Blacklist**: Enter e621-syntax blacklist rules (one rule per line).
 3. **Storage & Concurrency**: Configure parallel download threads (1–8) and toggle saving `.txt` tag sidecars.
 
-Settings are stored in `~/.config/e621-grabber/settings.json` (mode `0600`).
-The SQLite download history is kept in `~/.local/share/e621-grabber/history.db`.
+Settings are stored in `~/.config/e621-cruiser/settings.json` (mode `0600`).
+The SQLite download history is kept in `~/.local/share/e621-cruiser/history.db`.
 
 ---
 

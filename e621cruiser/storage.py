@@ -90,6 +90,14 @@ class History:
 
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            old_path = path.parent.parent / "e621-grabber" / path.name
+            if old_path.exists():
+                try:
+                    import shutil
+                    shutil.copy2(old_path, path)
+                except OSError:
+                    pass
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.execute(

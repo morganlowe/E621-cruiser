@@ -6,9 +6,15 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "e621-grabber"
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "e621-grabber"
+_CONFIG_BASE = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+_DATA_BASE = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+CONFIG_DIR = _CONFIG_BASE / "e621-cruiser"
+DATA_DIR = _DATA_BASE / "e621-cruiser"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+
+OLD_CONFIG_DIR = _CONFIG_BASE / "e621-grabber"
+OLD_DATA_DIR = _DATA_BASE / "e621-grabber"
 
 MIN_SCORE_ANY = -1000  # spin-box sentinel meaning "no score filter"
 
@@ -42,8 +48,11 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        file_to_read = SETTINGS_FILE
+        if not file_to_read.exists() and (OLD_CONFIG_DIR / "settings.json").exists():
+            file_to_read = OLD_CONFIG_DIR / "settings.json"
         try:
-            data = json.loads(SETTINGS_FILE.read_text())
+            data = json.loads(file_to_read.read_text())
         except (OSError, ValueError):
             return cls()
         known = {f.name for f in fields(cls)}

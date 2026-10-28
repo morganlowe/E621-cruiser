@@ -1,9 +1,9 @@
 import unittest
 from pathlib import Path
 
-from e621grabber.api import Pool, Post
-from e621grabber.blacklist import Blacklist
-from e621grabber.storage import DownloadJob, build_target, sanitize
+from e621cruiser.api import Pool, Post
+from e621cruiser.blacklist import Blacklist
+from e621cruiser.storage import DownloadJob, build_target, sanitize
 
 
 def make_post(**kw) -> Post:
@@ -84,7 +84,7 @@ class WidgetQueryTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_insert_tag(self):
-        from e621grabber.widgets import TagLineEdit
+        from e621cruiser.widgets import TagLineEdit
         edit = TagLineEdit()
         edit.setText("solo can")
         edit.setCursorPosition(len("solo can"))
@@ -99,7 +99,7 @@ class WidgetQueryTests(unittest.TestCase):
     def test_autocomplete_local_match_and_tab(self):
         from PySide6.QtCore import Qt, QEvent
         from PySide6.QtGui import QKeyEvent
-        from e621grabber.widgets import TagLineEdit
+        from e621cruiser.widgets import TagLineEdit
         edit = TagLineEdit()
         edit.show()
         edit.setText("wo")
@@ -115,14 +115,14 @@ class WidgetQueryTests(unittest.TestCase):
         edit.close()
 
     def test_empty_startup_state(self):
-        from e621grabber.main_window import MainWindow
+        from e621cruiser.main_window import MainWindow
         w = MainWindow()
         self.assertEqual(w.grid.count(), 0)
         self.assertIn("Search for tags", w.result_label.text())
         w.close()
 
     def test_search_with_clicked_bool(self):
-        from e621grabber.main_window import MainWindow
+        from e621cruiser.main_window import MainWindow
         w = MainWindow()
         w.tag_edit.setText("wolf")
         # Simulate button clicked passing False as raw argument

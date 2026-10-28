@@ -7,8 +7,8 @@ from .main_window import MainWindow
 
 def main() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("E621 Grabber")
-    app.setOrganizationName("e621-grabber")
+    app.setApplicationName("E621 Cruiser")
+    app.setOrganizationName("e621-cruiser")
     win = MainWindow()
     win.show()
     return app.exec()

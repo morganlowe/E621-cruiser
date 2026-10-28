@@ -14,7 +14,7 @@ from typing import Callable
 import requests
 
 BASE_URL = "https://e621.net"
-APP_NAME = "E621Grabber"
+APP_NAME = "E621Cruiser"
 APP_VERSION = "1.0"
 POSTS_PER_PAGE = 320  # API maximum
 MAX_PAGE = 750        # numeric page limit enforced by e621
