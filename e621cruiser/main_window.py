@@ -192,6 +192,8 @@ class MainWindow(QMainWindow):
         self.inspector.tag_search_requested.connect(self._search_only_tag)
         self.inspector.preview_requested.connect(self._preview)
         self.inspector.download_requested.connect(lambda p: self._enqueue([p]))
+        self.inspector.view_pool_requested.connect(self._open_pool_by_id)
+        self.inspector.download_pool_requested.connect(self._download_pool_by_id)
         self.inspector.setMinimumWidth(260)
         self.tabs.setMinimumWidth(350)
 
@@ -728,6 +730,20 @@ class MainWindow(QMainWindow):
                         on_result=lambda posts: self._enqueue(self.blacklist.filter(posts)[0], src),
                         on_error=partial(self._on_api_error, self._gen))
 
+    def _download_pool_by_id(self, pool_id: int) -> None:
+        if self._source.kind == "pool" and self._source.pool and self._source.pool.id == pool_id \
+                and self.grid.count():
+            self._enqueue(self.grid.all_posts(), self._source)
+            return
+        self.statusBar().showMessage(f"Fetching pool #{pool_id} for download…")
+        def on_pool(pool: Pool):
+            src = Source("pool", pool.display_name, f"pool:{pool.id}", pool)
+            self.api.submit(self.client.get_pool_posts, pool,
+                            on_result=lambda posts: self._enqueue(self.blacklist.filter(posts)[0], src),
+                            on_error=partial(self._on_api_error, self._gen))
+        self.api.submit(self.client.get_pool, pool_id, on_result=on_pool,
+                        on_error=partial(self._on_api_error, self._gen))
+
     # ============================================================= favorites
     def _load_favorites(self) -> None:
         user = self.fav_user.text().strip() or self.settings.username
@@ -861,6 +877,8 @@ class MainWindow(QMainWindow):
         dlg.exclude_tag.connect(self._exclude_tag_in_search)
         dlg.search_tag.connect(self._search_only_tag)
         dlg.download.connect(lambda p: self._enqueue([p]))
+        dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid)))
+        dlg.download_pool.connect(lambda pid: self._download_pool_by_id(pid))
         dlg.post_changed.connect(lambda p: self._load_preview_image(dlg, p))
         self._load_preview_image(dlg, post)
         dlg.showMaximized()
@@ -951,4 +969,5 @@ class MainWindow(QMainWindow):
                            lambda a=a: self._search_only_tag(a))
         for pid in post.pools[:3]:
             menu.addAction(f"Open pool #{pid}", lambda pid=pid: self._open_pool_by_id(pid))
+            menu.addAction(f"Download pool #{pid}", lambda pid=pid: self._download_pool_by_id(pid))
         menu.exec(self.grid.viewport().mapToGlobal(pos))

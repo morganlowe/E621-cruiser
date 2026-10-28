@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QImage, QPainter,
+from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPixmap, QStandardItem, QStandardItemModel)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QCompleter, QDialog,
                                QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLayout,
@@ -701,6 +701,8 @@ class PostInspector(QWidget):
     tag_search_requested = Signal(str)
     preview_requested = Signal(object)
     download_requested = Signal(object)
+    view_pool_requested = Signal(int)
+    download_pool_requested = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -731,6 +733,22 @@ class PostInspector(QWidget):
         btn_row.addWidget(self.btn_preview)
         btn_row.addWidget(self.btn_download)
 
+        # Pool actions
+        self.btn_view_pool = QPushButton("View Pool")
+        self.btn_view_pool.setStyleSheet("color: #a78bfa; font-weight: bold;")
+        self.btn_view_pool.clicked.connect(self._emit_view_pool)
+
+        self.btn_download_pool = QPushButton("Download Pool")
+        self.btn_download_pool.setStyleSheet("color: #60a5fa; font-weight: bold;")
+        self.btn_download_pool.clicked.connect(self._emit_download_pool)
+
+        pool_row = QHBoxLayout()
+        pool_row.addWidget(self.btn_view_pool)
+        pool_row.addWidget(self.btn_download_pool)
+        self.pool_widget = QWidget()
+        self.pool_widget.setLayout(pool_row)
+        self.pool_widget.setVisible(False)
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
         self.filter_edit.setClearButtonEnabled(True)
@@ -750,6 +768,7 @@ class PostInspector(QWidget):
         layout.addWidget(self.thumb_label)
         layout.addWidget(self.info_label)
         layout.addLayout(btn_row)
+        layout.addWidget(self.pool_widget)
         layout.addWidget(self.tag_header)
         layout.addWidget(self.filter_edit)
         layout.addWidget(self.tag_list, 1)
@@ -761,6 +780,28 @@ class PostInspector(QWidget):
     def _emit_download(self) -> None:
         if self._current_post:
             self.download_requested.emit(self._current_post)
+
+    def _emit_view_pool(self) -> None:
+        if not self._current_post or not self._current_post.pools:
+            return
+        if len(self._current_post.pools) == 1:
+            self.view_pool_requested.emit(self._current_post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self._current_post.pools:
+                menu.addAction(f"View Pool #{pid}", lambda pid=pid: self.view_pool_requested.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def _emit_download_pool(self) -> None:
+        if not self._current_post or not self._current_post.pools:
+            return
+        if len(self._current_post.pools) == 1:
+            self.download_pool_requested.emit(self._current_post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self._current_post.pools:
+                menu.addAction(f"Download Pool #{pid}", lambda pid=pid: self.download_pool_requested.emit(pid))
+            menu.exec(QCursor.pos())
 
     def _on_filter_changed(self, text: str) -> None:
         self.tag_list.filter_text(text)
@@ -775,6 +816,7 @@ class PostInspector(QWidget):
             self.info_label.setText("Click an image in the grid to view tags.")
             self.btn_preview.setEnabled(False)
             self.btn_download.setEnabled(False)
+            self.pool_widget.setVisible(False)
             self.tag_list.clear()
             return
 
@@ -782,6 +824,18 @@ class PostInspector(QWidget):
         self.title_label.setText(f"<b>Post #{post.id}</b> · {artists}")
         self.btn_preview.setEnabled(True)
         self.btn_download.setEnabled(True)
+
+        if post.pools:
+            self.pool_widget.setVisible(True)
+            if len(post.pools) == 1:
+                pid = post.pools[0]
+                self.btn_view_pool.setText(f"View Pool #{pid}")
+                self.btn_download_pool.setText(f"Download Pool #{pid}")
+            else:
+                self.btn_view_pool.setText("View Pool…")
+                self.btn_download_pool.setText("Download Pool…")
+        else:
+            self.pool_widget.setVisible(False)
 
         mb = post.size / 1_048_576 if post.size else 0
         details = [f"{post.ext.upper()}", f"{post.width}×{post.height}"]
@@ -818,6 +872,8 @@ class PreviewDialog(QDialog):
     search_tag = Signal(str)
     download = Signal(object)
     post_changed = Signal(object)
+    view_pool = Signal(int)
+    download_pool = Signal(int)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
                  active_query: str = "", parent: QWidget | None = None):
@@ -860,6 +916,14 @@ class PreviewDialog(QDialog):
         self.dl_btn.setStyleSheet("font-weight: bold; color: #48bb78;")
         self.dl_btn.clicked.connect(lambda: self.download.emit(self.post))
 
+        self.pool_view_btn = QPushButton("View Pool")
+        self.pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa;")
+        self.pool_view_btn.clicked.connect(self._on_view_pool_clicked)
+
+        self.pool_dl_btn = QPushButton("Download Pool")
+        self.pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
+
         self.web_btn = QPushButton("Open on e621")
         self.web_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.post.page_url)))
 
@@ -873,6 +937,8 @@ class PreviewDialog(QDialog):
         top_bar.addWidget(self.tags_toggle_btn)
         top_bar.addWidget(self.fs_btn)
         top_bar.addWidget(self.dl_btn)
+        top_bar.addWidget(self.pool_view_btn)
+        top_bar.addWidget(self.pool_dl_btn)
         top_bar.addWidget(self.web_btn)
         top_bar.addWidget(self.close_btn)
 
@@ -884,6 +950,22 @@ class PreviewDialog(QDialog):
         self.info_label = QLabel()
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("font-size: 12px; color: #cbd5e1; padding: 4px 0;")
+
+        # Sidebar pool action buttons
+        self.side_pool_view_btn = QPushButton("View Pool")
+        self.side_pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa; padding: 5px;")
+        self.side_pool_view_btn.clicked.connect(self._on_view_pool_clicked)
+
+        self.side_pool_dl_btn = QPushButton("Download Pool")
+        self.side_pool_dl_btn.setStyleSheet("font-weight: bold; color: #60a5fa; padding: 5px;")
+        self.side_pool_dl_btn.clicked.connect(self._on_download_pool_clicked)
+
+        side_pool_row = QHBoxLayout()
+        side_pool_row.addWidget(self.side_pool_view_btn)
+        side_pool_row.addWidget(self.side_pool_dl_btn)
+        self.side_pool_widget = QWidget()
+        self.side_pool_widget.setLayout(side_pool_row)
+        self.side_pool_widget.setVisible(False)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
@@ -901,6 +983,7 @@ class PreviewDialog(QDialog):
         only_btn.clicked.connect(self._search_selected)
 
         rl.addWidget(self.info_label)
+        rl.addWidget(self.side_pool_widget)
         rl.addWidget(QLabel("Tags (click to add/remove from search):"))
         rl.addWidget(self.filter_edit)
         rl.addWidget(self.tag_list, 1)
@@ -967,6 +1050,23 @@ class PreviewDialog(QDialog):
         pool_txt = f"<br>Pools: {', '.join(map(str, post.pools))}" if post.pools else ""
         self.info_label.setText(f"{' · '.join(details)}<br>Artist: <b>{artists}</b>{pool_txt}")
 
+        has_pools = bool(post.pools)
+        self.pool_view_btn.setVisible(has_pools)
+        self.pool_dl_btn.setVisible(has_pools)
+        self.side_pool_widget.setVisible(has_pools)
+        if has_pools:
+            if len(post.pools) == 1:
+                pid = post.pools[0]
+                txt_v = f"View Pool #{pid}"
+                txt_d = f"Download Pool #{pid}"
+            else:
+                txt_v = "View Pool…"
+                txt_d = "Download Pool…"
+            self.pool_view_btn.setText(txt_v)
+            self.pool_dl_btn.setText(txt_d)
+            self.side_pool_view_btn.setText(txt_v)
+            self.side_pool_dl_btn.setText(txt_d)
+
         self.tag_list.set_post_tags(post.tags, self._active_query)
         self.filter_edit.clear()
 
@@ -975,6 +1075,28 @@ class PreviewDialog(QDialog):
                                      "Use “Open on e621” to play video.")
         else:
             self.image_label.setText("Loading high-res preview…")
+
+    def _on_view_pool_clicked(self) -> None:
+        if not self.post.pools:
+            return
+        if len(self.post.pools) == 1:
+            self.view_pool.emit(self.post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self.post.pools:
+                menu.addAction(f"View Pool #{pid}", lambda pid=pid: self.view_pool.emit(pid))
+            menu.exec(QCursor.pos())
+
+    def _on_download_pool_clicked(self) -> None:
+        if not self.post.pools:
+            return
+        if len(self.post.pools) == 1:
+            self.download_pool.emit(self.post.pools[0])
+        else:
+            menu = QMenu(self)
+            for pid in self.post.pools:
+                menu.addAction(f"Download Pool #{pid}", lambda pid=pid: self.download_pool.emit(pid))
+            menu.exec(QCursor.pos())
 
     def _on_tag_clicked(self, tag: str) -> None:
         self.add_tag.emit(tag)

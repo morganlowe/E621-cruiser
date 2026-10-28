@@ -217,6 +217,56 @@ class WidgetQueryTests(unittest.TestCase):
         self.assertTrue(w.bl_section.is_expanded())
         w.close()
 
+    def test_pool_buttons_in_preview_and_inspector(self):
+        from e621cruiser.widgets import PreviewDialog, PostInspector
+        p_with_pool = make_post(pools=[30725])
+        p_no_pool = make_post(pools=[])
+
+        # Test PostInspector
+        inspector = PostInspector()
+        inspector.set_post(p_with_pool)
+        self.assertFalse(inspector.pool_widget.isHidden())
+        self.assertIn("30725", inspector.btn_view_pool.text())
+        self.assertIn("30725", inspector.btn_download_pool.text())
+
+        pool_view_signals = []
+        pool_dl_signals = []
+        inspector.view_pool_requested.connect(pool_view_signals.append)
+        inspector.download_pool_requested.connect(pool_dl_signals.append)
+
+        inspector.btn_view_pool.click()
+        inspector.btn_download_pool.click()
+        self.assertEqual(pool_view_signals, [30725])
+        self.assertEqual(pool_dl_signals, [30725])
+
+        inspector.set_post(p_no_pool)
+        self.assertTrue(inspector.pool_widget.isHidden())
+
+        # Test PreviewDialog
+        dlg = PreviewDialog(p_with_pool)
+        self.assertFalse(dlg.pool_view_btn.isHidden())
+        self.assertFalse(dlg.pool_dl_btn.isHidden())
+        self.assertFalse(dlg.side_pool_widget.isHidden())
+        self.assertIn("30725", dlg.pool_view_btn.text())
+        self.assertIn("30725", dlg.pool_dl_btn.text())
+
+        dlg_view_signals = []
+        dlg_dl_signals = []
+        dlg.view_pool.connect(dlg_view_signals.append)
+        dlg.download_pool.connect(dlg_dl_signals.append)
+
+        dlg.pool_view_btn.click()
+        dlg.pool_dl_btn.click()
+        self.assertEqual(dlg_view_signals, [30725])
+        self.assertEqual(dlg_dl_signals, [30725])
+
+        # Change post to no pool
+        dlg.set_post(p_no_pool)
+        self.assertTrue(dlg.pool_view_btn.isHidden())
+        self.assertTrue(dlg.pool_dl_btn.isHidden())
+        self.assertTrue(dlg.side_pool_widget.isHidden())
+        dlg.close()
+
 
 if __name__ == "__main__":
     unittest.main()
