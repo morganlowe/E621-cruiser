@@ -9,15 +9,16 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QImage, QKeySequence
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter,
-                               QTabWidget, QVBoxLayout, QWidget)
+                               QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSpinBox,
+                               QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from .api import POSTS_PER_PAGE, E621Client, Pool, Post
 from .blacklist import Blacklist
 from .downloader import DownloadManager
-from .settings import DATA_DIR, MIN_SCORE_ANY, Settings
+from .settings import (DATA_DIR, MEDIA_FILTERS, MIN_SCORE_ANY, QUICK_BLACKLIST_ITEMS,
+                       Settings, full_blacklist)
 from .storage import ORGANIZE_MODES, DownloadJob, History
 from .widgets import PostGrid, PostInspector, PreviewDialog, SettingsDialog, TagLineEdit, TagListWidget
 from .workers import Runner, fetch_image
@@ -37,7 +38,7 @@ class Source:
 class MainWindow(QMainWindow):
     fetch_status = Signal(str)  # emitted from worker threads
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         super().__init__()
         self.setWindowTitle("E621 Cruiser")
         assets = Path(__file__).resolve().parent.parent / "assets"
@@ -45,14 +46,14 @@ class MainWindow(QMainWindow):
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
-        self.settings = Settings.load()
+        self.settings = settings if settings is not None else Settings.load()
         self.history = History(DATA_DIR / "history.db")
         self.api = Runner(2, self)      # API calls (rate-limited inside the client)
         self.tag_api = Runner(1, self)  # Dedicated runner for tag autocomplete
         self.thumbs = Runner(6, self)   # thumbnails / previews from the static CDN
         self.downloads = DownloadManager(self.history, self)
         self.client = E621Client()
-        self.blacklist = Blacklist()
+        self.blacklist = Blacklist(full_blacklist(self.settings))
 
         self._gen = 0
         self._page = 1
@@ -136,10 +137,10 @@ class MainWindow(QMainWindow):
         sel_all.clicked.connect(self.grid.selectAll)
         sel_none = QPushButton("Select none")
         sel_none.clicked.connect(self.grid.clearSelection)
-        self.dl_sel_btn = QPushButton("⬇ Download selected (0)")
+        self.dl_sel_btn = QPushButton("Download selected (0)")
         self.dl_sel_btn.setShortcut(QKeySequence("Ctrl+D"))
         self.dl_sel_btn.clicked.connect(self._download_selected)
-        self.dl_all_btn = QPushButton("⬇ Download ALL results")
+        self.dl_all_btn = QPushButton("Download ALL results")
         self.dl_all_btn.clicked.connect(self._download_all)
         cancel = QPushButton("Cancel downloads")
         cancel.clicked.connect(self._cancel_downloads)
@@ -228,6 +229,12 @@ class MainWindow(QMainWindow):
         for cb in (self.cb_s, self.cb_q, self.cb_e):
             rating_row.addWidget(cb)
 
+        self.media_filter = QComboBox()
+        for label, val in MEDIA_FILTERS:
+            self.media_filter.addItem(label, val)
+
+        self.cb_in_pool = QCheckBox("In pools only")
+
         self.min_score = QSpinBox()
         self.min_score.setRange(MIN_SCORE_ANY, 100000)
         self.min_score.setSpecialValueText("Any")
@@ -238,12 +245,45 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         form.addRow("Rating:", rating_row)
+        form.addRow("Media:", self.media_filter)
+        form.addRow("Pools:", self.cb_in_pool)
         form.addRow("Min score:", self.min_score)
         form.addRow("Sort:", self.order)
 
-        go = QPushButton("🔍 Search")
+        go = QPushButton("Search")
         go.setStyleSheet("font-weight: bold; padding: 6px;")
         go.clicked.connect(lambda: self._start_search())
+
+        # Quick Blacklist Group
+        bl_box = QGroupBox("Quick Blacklist (Exclude)")
+        bl_lay = QVBoxLayout(bl_box)
+        bl_hint = QLabel("<small>One-click exclusions applied to query and local filter.</small>")
+        bl_hint.setWordWrap(True)
+        bl_lay.addWidget(bl_hint)
+
+        grid_lay = QGridLayout()
+        self.quick_bl_checkboxes: dict[str, QCheckBox] = {}
+        row, col = 0, 0
+        for tag_id, label in QUICK_BLACKLIST_ITEMS:
+            cb = QCheckBox(label)
+            cb.toggled.connect(self._on_quick_blacklist_toggled)
+            self.quick_bl_checkboxes[tag_id] = cb
+            grid_lay.addWidget(cb, row, col)
+            col += 1
+            if col > 1:
+                col = 0
+                row += 1
+        bl_lay.addLayout(grid_lay)
+
+        btn_row = QHBoxLayout()
+        sel_common = QPushButton("Select Common")
+        sel_common.setToolTip("Select Gore, Scat, Watersports, Young/Cub, Flash")
+        sel_common.clicked.connect(self._select_common_blacklist)
+        clear_bl = QPushButton("Clear All")
+        clear_bl.clicked.connect(self._clear_quick_blacklist)
+        btn_row.addWidget(sel_common)
+        btn_row.addWidget(clear_bl)
+        bl_lay.addLayout(btn_row)
 
         saved_box = QGroupBox("Saved searches (double-click to run)")
         self.saved_list = QListWidget()
@@ -264,8 +304,28 @@ class MainWindow(QMainWindow):
         lay.addWidget(hint)
         lay.addLayout(form)
         lay.addWidget(go)
-        lay.addWidget(saved_box, 1)
-        return w
+        lay.addWidget(bl_box)
+        lay.addWidget(saved_box)
+        lay.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(w)
+        return scroll
+
+    def _on_quick_blacklist_toggled(self) -> None:
+        self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
+        self.blacklist = Blacklist(full_blacklist(self.settings))
+
+    def _select_common_blacklist(self) -> None:
+        common = {"gore", "scat", "watersports", "young", "type:swf"}
+        for tag, cb in self.quick_bl_checkboxes.items():
+            cb.setChecked(tag in common)
+
+    def _clear_quick_blacklist(self) -> None:
+        for cb in self.quick_bl_checkboxes.values():
+            cb.setChecked(False)
 
     def _build_pools_tab(self) -> QWidget:
         w = QWidget()
@@ -279,7 +339,7 @@ class MainWindow(QMainWindow):
         self.pool_list.itemDoubleClicked.connect(lambda it: self._open_pool(it.data(Qt.ItemDataRole.UserRole)))
         open_btn = QPushButton("Show pool")
         open_btn.clicked.connect(self._open_selected_pool)
-        dl_btn = QPushButton("⬇ Download whole pool")
+        dl_btn = QPushButton("Download whole pool")
         dl_btn.setStyleSheet("font-weight: bold;")
         dl_btn.clicked.connect(self._download_selected_pool)
         row = QHBoxLayout()
@@ -325,6 +385,11 @@ class MainWindow(QMainWindow):
         self.cb_s.setChecked(s.rating_s)
         self.cb_q.setChecked(s.rating_q)
         self.cb_e.setChecked(s.rating_e)
+        media_idx = self.media_filter.findData(s.media_filter)
+        self.media_filter.setCurrentIndex(max(0, media_idx))
+        self.cb_in_pool.setChecked(s.pool_only)
+        for tag, cb in self.quick_bl_checkboxes.items():
+            cb.setChecked(tag in s.quick_blacklist)
         self.min_score.setValue(s.min_score)
         self.order.setCurrentIndex(max(0, self.order.findData(s.order)))
         self.fav_user.setText(s.favorites_user)
@@ -338,6 +403,9 @@ class MainWindow(QMainWindow):
         s.write_tags_file = self.tags_file_cb.isChecked()
         s.rating_s, s.rating_q, s.rating_e = (self.cb_s.isChecked(), self.cb_q.isChecked(),
                                               self.cb_e.isChecked())
+        s.media_filter = self.media_filter.currentData() or ""
+        s.pool_only = self.cb_in_pool.isChecked()
+        s.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         s.min_score = self.min_score.value()
         s.order = self.order.currentData()
         s.favorites_user = self.fav_user.text().strip()
@@ -347,7 +415,7 @@ class MainWindow(QMainWindow):
     def _apply_settings(self) -> None:
         s = self.settings
         self.client = E621Client(s.username, s.api_key)
-        self.blacklist = Blacklist(s.blacklist)
+        self.blacklist = Blacklist(full_blacklist(s))
         self.downloads.configure(self.client, s.concurrent_downloads)
         self.tags_file_cb.setChecked(s.write_tags_file)
         if self.client.authenticated:
@@ -362,10 +430,10 @@ class MainWindow(QMainWindow):
         def on_checked(res):
             ok, msg = res
             if ok:
-                self.statusBar().showMessage(f"✓ {msg}", 6000)
+                self.statusBar().showMessage(f"[OK] {msg}", 6000)
                 QMessageBox.information(self, "Connection Successful", msg)
             else:
-                self.statusBar().showMessage(f"✗ {msg}", 8000)
+                self.statusBar().showMessage(f"[Failed] {msg}", 8000)
                 QMessageBox.warning(self, "Connection Failed", msg)
         self.api.submit(check, on_result=on_checked)
 
@@ -375,11 +443,11 @@ class MainWindow(QMainWindow):
         def on_checked(res):
             ok, msg = res
             if ok:
-                self.statusBar().showMessage(f"✓ {msg}", 5000)
-                self.auth_label.setText(f"✓ {self.settings.username or 'Anonymous'}")
+                self.statusBar().showMessage(f"[OK] {msg}", 5000)
+                self.auth_label.setText(self.settings.username or "Anonymous")
             else:
-                self.statusBar().showMessage(f"✗ {msg}", 8000)
-                self.auth_label.setText("⚠ Connection error")
+                self.statusBar().showMessage(f"[Failed] {msg}", 8000)
+                self.auth_label.setText("Connection error")
         self.api.submit(check, on_result=on_checked)
 
     def _open_settings(self) -> None:
@@ -424,6 +492,23 @@ class MainWindow(QMainWindow):
             parts.append(f"score:>={self.min_score.value()}")
         if self.order.currentData() and "order:" not in base:
             parts.append(self.order.currentData())
+
+        # Media filter
+        media_val = self.media_filter.currentData()
+        if media_val and media_val not in base:
+            parts.append(media_val)
+
+        # In pool only
+        if self.cb_in_pool.isChecked() and "pool:" not in base:
+            parts.append("pool:any")
+
+        # Quick blacklist server-side exclusions
+        active_bl = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
+        for tag in active_bl:
+            neg = f"-{tag}"
+            if neg not in base and tag not in base:
+                parts.append(neg)
+
         return " ".join(parts).strip()
 
     def _autocomplete(self, token: str) -> None:
@@ -505,7 +590,7 @@ class MainWindow(QMainWindow):
         self._exhausted = True
         self.statusBar().showMessage(f"Error: {err}")
         self._log(f"Error: {err}")
-        self.result_label.setText(f"<span style='color: #e06c75;'>⚠ Error loading results: {err}</span>")
+        self.result_label.setText(f"<span style='color: #e06c75;'>Error loading results: {err}</span>")
 
     def _update_result_label(self) -> None:
         s = self._source
@@ -520,7 +605,7 @@ class MainWindow(QMainWindow):
         self.result_label.setText(f"{head} · {self.grid.count()} shown{more}{hidden}")
 
     def _update_selection_label(self) -> None:
-        self.dl_sel_btn.setText(f"⬇ Download selected ({len(self.grid.selectedItems())})")
+        self.dl_sel_btn.setText(f"Download selected ({len(self.grid.selectedItems())})")
 
     # --------------------------------------------------------- saved searches
     def _save_search(self) -> None:
@@ -691,11 +776,11 @@ class MainWindow(QMainWindow):
         if status in ("ok", "skipped"):
             self.grid.mark_downloaded(post_id)
         if status == "ok":
-            self._log(f"✓ #{post_id} → {detail}")
+            self._log(f"[OK] #{post_id} -> {detail}")
         elif status == "error":
-            self._log(f"✗ #{post_id}: {detail}")
+            self._log(f"[Error] #{post_id}: {detail}")
         elif status == "skipped":
-            self._log(f"• #{post_id} skipped ({detail})")
+            self._log(f"[Skipped] #{post_id} ({detail})")
 
     def _log(self, msg: str) -> None:
         self.log_view.appendPlainText(msg)

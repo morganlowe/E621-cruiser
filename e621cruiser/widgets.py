@@ -302,7 +302,7 @@ class HoverPreviewPopup(QWidget):
         details = [f"<b>#{post.id}</b>", post.ext.upper(), f"{post.width}×{post.height}"]
         if mb > 0:
             details.append(f"{mb:.1f} MB")
-        details.append(f"▲{post.score}")
+        details.append(f"Score {post.score}")
         if post.rating:
             details.append(f"Rating {post.rating.upper()}")
 
@@ -361,7 +361,7 @@ def render_tile(image: QImage | None, post: Post, downloaded: bool,
     if post.pools:
         badge(-2, TILE - 18, "POOL", "#5a3e9e")
     if downloaded:
-        badge(-2, 2, "✓ saved", "#1f8f3a")
+        badge(-2, 2, "SAVED", "#1f8f3a")
     p.end()
     return QIcon(pm)
 
@@ -406,7 +406,7 @@ class PostGrid(QListWidget):
                 self._downloaded.add(post.id)
             item = QListWidgetItem(render_tile(None, post, is_dl,
                                                "loading…" if post.preview_url else "no preview\n(login?)"),
-                                   f"#{post.id}  ▲{post.score}")
+                                   f"#{post.id}  Score {post.score}")
             item.setData(Qt.ItemDataRole.UserRole, post.id)
             item.setToolTip(self._tooltip(post))
             self.addItem(item)
@@ -515,7 +515,7 @@ class TagListWidget(QListWidget):
             for t in sorted(tag_list):
                 is_inc = t in self._active_search_tokens
                 is_exc = f"-{t}" in self._active_search_tokens
-                prefix = "✓ " if is_inc else ("✗ " if is_exc else "")
+                prefix = "[+] " if is_inc else ("[-] " if is_exc else "")
 
                 it = QListWidgetItem(f"{prefix}{t}")
                 it.setData(Qt.ItemDataRole.UserRole, t)
@@ -537,7 +537,7 @@ class TagListWidget(QListWidget):
                 continue
             is_inc = t in self._active_search_tokens
             is_exc = f"-{t}" in self._active_search_tokens
-            prefix = "✓ " if is_inc else ("✗ " if is_exc else "")
+            prefix = "[+] " if is_inc else ("[-] " if is_exc else "")
             it.setText(f"{prefix}{t}")
             f = it.font()
             f.setBold(is_inc or is_exc)
@@ -675,7 +675,7 @@ class PostInspector(QWidget):
         details = [f"{post.ext.upper()}", f"{post.width}×{post.height}"]
         if mb > 0:
             details.append(f"{mb:.1f} MB")
-        details.append(f"▲{post.score}")
+        details.append(f"Score {post.score}")
         if post.rating:
             details.append(f"Rating {post.rating.upper()}")
         self.info_label.setText(" · ".join(details))
@@ -728,9 +728,9 @@ class PreviewDialog(QDialog):
 
         # Top bar
         top_bar = QHBoxLayout()
-        self.prev_btn = QPushButton("◀ Prev (Left)")
+        self.prev_btn = QPushButton("Previous (Left)")
         self.prev_btn.clicked.connect(self.prev_post)
-        self.next_btn = QPushButton("Next ▶ (Right)")
+        self.next_btn = QPushButton("Next (Right)")
         self.next_btn.clicked.connect(self.next_post)
 
         self.counter_label = QLabel()
@@ -744,14 +744,14 @@ class PreviewDialog(QDialog):
         self.fs_btn = QPushButton("Fullscreen (F11)")
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
 
-        self.dl_btn = QPushButton("⬇ Download (D)")
+        self.dl_btn = QPushButton("Download (D)")
         self.dl_btn.setStyleSheet("font-weight: bold; color: #48bb78;")
         self.dl_btn.clicked.connect(lambda: self.download.emit(self.post))
 
         self.web_btn = QPushButton("Open on e621")
         self.web_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.post.page_url)))
 
-        self.close_btn = QPushButton("✕ Close (Esc)")
+        self.close_btn = QPushButton("Close (Esc)")
         self.close_btn.clicked.connect(self.close)
 
         top_bar.addWidget(self.prev_btn)
@@ -847,7 +847,7 @@ class PreviewDialog(QDialog):
         details = [f"<b>#{post.id}</b>", post.ext.upper(), f"{post.width}×{post.height}"]
         if mb > 0:
             details.append(f"{mb:.1f} MB")
-        details.append(f"▲{post.score}")
+        details.append(f"Score {post.score}")
         details.append(f"Favs {post.fav_count}")
         if post.rating:
             details.append(f"Rating {post.rating.upper()}")
@@ -892,12 +892,12 @@ class PreviewDialog(QDialog):
 
     def _add_selected(self) -> None:
         if it := self.tag_list.currentItem():
-            tag = it.data(Qt.ItemDataRole.UserRole) or it.text().lstrip("✓ ✗ ")
+            tag = it.data(Qt.ItemDataRole.UserRole) or it.text().removeprefix("[+] ").removeprefix("[-] ")
             self.add_tag.emit(tag)
 
     def _search_selected(self) -> None:
         if it := self.tag_list.currentItem():
-            tag = it.data(Qt.ItemDataRole.UserRole) or it.text().lstrip("✓ ✗ ")
+            tag = it.data(Qt.ItemDataRole.UserRole) or it.text().removeprefix("[+] ").removeprefix("[-] ")
             self.search_tag.emit(tag)
 
     def keyPressEvent(self, e):  # noqa: N802
@@ -992,10 +992,10 @@ class SettingsDialog(QDialog):
         client = E621Client(self.username.text(), self.api_key.text())
         ok, msg = client.check_connection()
         if ok:
-            self.test_status_label.setText(f"✓ {msg}")
+            self.test_status_label.setText(f"[OK] {msg}")
             self.test_status_label.setStyleSheet("color: #48bb78; font-weight: bold;")
         else:
-            self.test_status_label.setText(f"✗ {msg}")
+            self.test_status_label.setText(f"[Failed] {msg}")
             self.test_status_label.setStyleSheet("color: #f56565; font-weight: bold;")
 
     def apply_to(self, s: Settings) -> None:

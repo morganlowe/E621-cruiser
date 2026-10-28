@@ -118,19 +118,69 @@ class WidgetQueryTests(unittest.TestCase):
 
     def test_empty_startup_state(self):
         from e621cruiser.main_window import MainWindow
-        w = MainWindow()
+        from e621cruiser.settings import Settings
+        w = MainWindow(Settings())
         self.assertEqual(w.grid.count(), 0)
         self.assertIn("Search for tags", w.result_label.text())
         w.close()
 
     def test_search_with_clicked_bool(self):
         from e621cruiser.main_window import MainWindow
-        w = MainWindow()
+        from e621cruiser.settings import Settings
+        w = MainWindow(Settings())
         w.tag_edit.setText("wolf")
         # Simulate button clicked passing False as raw argument
         w._start_search(False)
         self.assertEqual(w._source.query, "wolf")
         w.close()
+
+    def test_compose_query_filters(self):
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        w = MainWindow(Settings())
+        w.tag_edit.setText("wolf")
+
+        # Set media filter to Drawings only (-animated)
+        idx = w.media_filter.findData("-animated")
+        w.media_filter.setCurrentIndex(idx)
+        # Check pool only
+        w.cb_in_pool.setChecked(True)
+        # Check quick blacklist items: gore and scat
+        if "gore" in w.quick_bl_checkboxes:
+            w.quick_bl_checkboxes["gore"].setChecked(True)
+        if "scat" in w.quick_bl_checkboxes:
+            w.quick_bl_checkboxes["scat"].setChecked(True)
+
+        composed = w._compose_query("wolf")
+        self.assertIn("wolf", composed)
+        self.assertIn("-animated", composed)
+        self.assertIn("pool:any", composed)
+        self.assertIn("-gore", composed)
+        self.assertIn("-scat", composed)
+
+        # Ensure no duplicate if tag already contains pool: or -animated
+        composed2 = w._compose_query("wolf pool:123 -animated")
+        self.assertNotIn("pool:any", composed2)
+        self.assertEqual(composed2.count("-animated"), 1)
+
+        w.close()
+
+    def test_full_blacklist_and_settings(self):
+        from e621cruiser.settings import Settings, full_blacklist
+        s = Settings(
+            blacklist="feral\ncomic",
+            quick_blacklist=["gore", "young"]
+        )
+        fb = full_blacklist(s)
+        self.assertIn("feral", fb)
+        self.assertIn("comic", fb)
+        self.assertIn("gore", fb)
+        self.assertIn("young", fb)
+
+        # Test dictionary serialization round-trip
+        data = s.to_dict()
+        s2 = Settings.from_dict(data)
+        self.assertEqual(s2.quick_blacklist, ["gore", "young"])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,33 @@ OLD_DATA_DIR = _DATA_BASE / "e621-grabber"
 
 MIN_SCORE_ANY = -1000  # spin-box sentinel meaning "no score filter"
 
+MEDIA_FILTERS: list[tuple[str, str]] = [
+    ("All media", ""),
+    ("Drawings / Static only", "-animated"),
+    ("Animations only", "animated"),
+    ("Videos only (WebM/MP4)", "type:webm"),
+    ("GIFs only", "type:gif"),
+]
+
+QUICK_BLACKLIST_ITEMS: list[tuple[str, str]] = [
+    ("gore", "Gore / Violence"),
+    ("scat", "Scat / Feces"),
+    ("watersports", "Watersports"),
+    ("fart", "Fart"),
+    ("vore", "Vore"),
+    ("feral", "Feral"),
+    ("hyper", "Hyper / Macro"),
+    ("inflation", "Inflation"),
+    ("diaper", "Diaper / Baby"),
+    ("young", "Young / Cub"),
+    ("humiliation", "Humiliation"),
+    ("transformation", "Transformation"),
+    ("type:swf", "Flash (.swf)"),
+    ("comic", "Comics"),
+    ("3d", "3D / CGI"),
+    ("photo", "Photos / Real"),
+]
+
 DEFAULT_BLACKLIST = """\
 # One rule per line, e621 syntax. Examples:
 #   gore
@@ -30,6 +57,15 @@ DEFAULT_BLACKLIST = """\
 #   young -rating:s
 #   type:swf
 """
+
+
+def full_blacklist(settings: Settings) -> str:
+    """Combine custom blacklist text and active quick blacklist items."""
+    parts = [settings.blacklist.strip()] if settings.blacklist.strip() else []
+    if settings.quick_blacklist:
+        parts.append("# Quick blacklist selections:")
+        parts.extend(settings.quick_blacklist)
+    return "\n".join(parts)
 
 
 @dataclass
@@ -47,9 +83,20 @@ class Settings:
     rating_e: bool = True
     min_score: int = MIN_SCORE_ANY
     order: str = ""
+    media_filter: str = ""
+    pool_only: bool = False
+    quick_blacklist: list[str] = field(default_factory=list)
     saved_searches: list[str] = field(default_factory=list)
     favorites_user: str = ""
     window_geometry: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Settings":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -60,8 +107,7 @@ class Settings:
             data = json.loads(file_to_read.read_text())
         except (OSError, ValueError):
             return cls()
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        return cls.from_dict(data)
 
     def save(self) -> None:
         try:
