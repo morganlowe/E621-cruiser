@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#152f4e" />
+      <stop offset="100%" stop-color="#0c1b2d" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded box -->
+  <rect x="12" y="12" width="232" height="232" rx="48" fill="url(#bgGrad)" stroke="#e5a93b" stroke-width="6" />
+  <rect x="18" y="18" width="220" height="220" rx="42" fill="none" stroke="rgba(229, 169, 59, 0.25)" stroke-width="2" />
+
+  <!-- e621 label -->
+  <text x="128" y="66" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-weight="bold" font-size="28" fill="#5b9bd5">e621</text>
+
+  <!-- Download Arrow -->
+  <rect x="110" y="82" width="36" height="56" rx="6" fill="#ffffff" />
+  <polygon points="76,134 128,186 180,134" fill="#ffffff" />
+
+  <!-- Download Tray -->
+  <rect x="72" y="198" width="112" height="18" rx="8" fill="#e5a93b" />
+</svg>
