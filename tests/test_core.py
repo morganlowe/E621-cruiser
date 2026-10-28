@@ -574,6 +574,121 @@ class WidgetQueryTests(unittest.TestCase):
 
             w.close()
 
+    def test_e621_interactions(self):
+        from unittest.mock import MagicMock
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtCore import QEvent, Qt
+        from e621cruiser.api import E621Client, Post
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        from e621cruiser.widgets import PostInspector, PreviewDialog
+
+        # Test Post dataclass and from_json with is_favorited and own_vote
+        p_data = {
+            "id": 999,
+            "file": {"md5": "123", "ext": "jpg", "url": "https://x/123.jpg", "width": 100, "height": 100, "size": 500},
+            "preview": {"url": "https://x/p.jpg"},
+            "sample": {"has": False},
+            "score": {"total": 42},
+            "fav_count": 15,
+            "is_favorited": True,
+            "own_vote": 1,
+            "tags": {"artist": ["superartist"]},
+        }
+        post = Post.from_json(p_data)
+        self.assertEqual(post.id, 999)
+        self.assertEqual(post.score, 42)
+        self.assertEqual(post.fav_count, 15)
+        self.assertTrue(post.is_favorited)
+        self.assertEqual(post.own_vote, 1)
+
+        # Test Client interaction methods with mocks
+        client = E621Client("testuser", "testkey")
+        client._post = MagicMock(return_value={"is_favorited": True})
+        client._delete = MagicMock(return_value={})
+
+        client.add_favorite(999)
+        client._post.assert_called_with("/favorites.json", data={"post_id": "999"})
+
+        client.remove_favorite(999)
+        client._delete.assert_called_with("/favorites/999.json")
+
+        client.vote_post(999, 1)
+        client._post.assert_called_with("/posts/999/votes.json", data={"score": "1"})
+
+        client.remove_vote(999)
+        client._delete.assert_called_with("/posts/999/votes.json")
+
+        # Test PostInspector Favorite and Upvote UI
+        inspector = PostInspector()
+        inspector.set_post(post)
+        self.assertIn("Favorited (15)", inspector.btn_fav.text())
+        self.assertIn("▲ Voted (42)", inspector.btn_upvote.text())
+
+        # Test PostInspector signals
+        fav_signal_emitted = []
+        vote_signal_emitted = []
+        inspector.favorite_toggle_requested.connect(lambda p: fav_signal_emitted.append(p.id))
+        inspector.upvote_toggle_requested.connect(lambda p: vote_signal_emitted.append(p.id))
+
+        inspector.btn_fav.click()
+        self.assertEqual(fav_signal_emitted, [999])
+        inspector.btn_upvote.click()
+        self.assertEqual(vote_signal_emitted, [999])
+        inspector.deleteLater()
+
+        # Test PreviewDialog interactions
+        dlg = PreviewDialog(post, all_posts=[post], in_bank=False)
+        self.assertIn("Favorited (15)", dlg.fav_btn.text())
+        self.assertIn("▲ Voted (42)", dlg.vote_btn.text())
+
+        dlg_fav_emitted = []
+        dlg_vote_emitted = []
+        dlg.favorite_toggle.connect(lambda p: dlg_fav_emitted.append(p.id))
+        dlg.upvote_toggle.connect(lambda p: dlg_vote_emitted.append(p.id))
+
+        # Test L shortcut for favorite
+        key_l = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_L, Qt.KeyboardModifier.NoModifier)
+        dlg.keyPressEvent(key_l)
+        self.assertEqual(dlg_fav_emitted, [999])
+
+        # Test U shortcut for upvote
+        key_u = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_U, Qt.KeyboardModifier.NoModifier)
+        dlg.keyPressEvent(key_u)
+        self.assertEqual(dlg_vote_emitted, [999])
+
+        dlg.close()
+        dlg.deleteLater()
+
+        # Test MainWindow _toggle_favorite and _toggle_upvote
+        s = Settings(username="testuser", api_key="secretkey")
+        w = MainWindow(s)
+        # Mock API submit to run synchronously
+        w.api.submit = lambda func, *args, **kwargs: kwargs["on_result"](func())
+        w.client = client
+
+        # Toggle favorite off (was True)
+        w._toggle_favorite(post)
+        self.assertFalse(post.is_favorited)
+        self.assertEqual(post.fav_count, 14)
+
+        # Toggle favorite back on (was False)
+        w._toggle_favorite(post)
+        self.assertTrue(post.is_favorited)
+        self.assertEqual(post.fav_count, 15)
+
+        # Toggle upvote off (was 1)
+        w._toggle_upvote(post)
+        self.assertEqual(post.own_vote, 0)
+        self.assertEqual(post.score, 41)
+
+        # Toggle upvote back on
+        w._toggle_upvote(post)
+        self.assertEqual(post.own_vote, 1)
+        self.assertEqual(post.score, 42)
+
+        w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -416,6 +416,8 @@ class MainWindow(QMainWindow):
         self.inspector.preview_requested.connect(self._preview)
         self.inspector.download_requested.connect(lambda p: self._enqueue([p]))
         self.inspector.bank_toggle_requested.connect(self._toggle_spank_bank)
+        self.inspector.favorite_toggle_requested.connect(self._toggle_favorite)
+        self.inspector.upvote_toggle_requested.connect(self._toggle_upvote)
         self.inspector.bank_pool_requested.connect(self._toggle_pool_by_id_in_bank)
         self.inspector.view_pool_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=False))
         self.inspector.view_pool_new_tab_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=True))
@@ -1055,6 +1057,98 @@ class MainWindow(QMainWindow):
         self._log(msg)
         return added
 
+    # ============================================================== e621 interactions
+    def _prompt_login_for_interaction(self, action_name: str = "Interacting with posts") -> bool:
+        if self.client.authenticated:
+            return True
+        r = QMessageBox.question(
+            self,
+            "e621 Login Required",
+            f"{action_name} on e621 requires logging in with your e621 Username and API key so the site can register your action and credit the artist.\n\n"
+            "Would you like to open Settings now to enter your credentials?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if r == QMessageBox.StandardButton.Yes:
+            self._open_settings()
+        return False
+
+    def _toggle_favorite(self, post: Post) -> None:
+        if not self._prompt_login_for_interaction("Favoriting / liking posts"):
+            return
+        is_fav = post.is_favorited
+        action_verb = "Removing favorite from" if is_fav else "Favoriting"
+        self.statusBar().showMessage(f"{action_verb} post #{post.id} on e621…")
+
+        def call():
+            if is_fav:
+                self.client.remove_favorite(post.id)
+                return False
+            else:
+                self.client.add_favorite(post.id)
+                return True
+
+        def on_done(new_state: bool):
+            post.is_favorited = new_state
+            if new_state:
+                post.fav_count += 1
+                msg = f"Favorited post #{post.id} on e621 (artist credited)"
+            else:
+                post.fav_count = max(0, post.fav_count - 1)
+                msg = f"Removed post #{post.id} from your e621 favorites"
+            self._update_post_interactions_ui(post)
+            self.statusBar().showMessage(msg, 4000)
+            self._log(msg)
+
+        def on_err(e):
+            err_msg = str(e)
+            self.statusBar().showMessage(f"Failed to update favorite: {err_msg}", 5000)
+            QMessageBox.warning(self, "Favorite Failed", f"Could not update favorite on e621:\n{err_msg}")
+
+        self.api.submit(call, on_result=on_done, on_error=on_err)
+
+    def _toggle_upvote(self, post: Post) -> None:
+        if not self._prompt_login_for_interaction("Voting on posts"):
+            return
+        is_voted = (post.own_vote == 1)
+        action_verb = "Removing upvote from" if is_voted else "Upvoting"
+        self.statusBar().showMessage(f"{action_verb} post #{post.id} on e621…")
+
+        def call():
+            if is_voted:
+                self.client.remove_vote(post.id)
+                return 0
+            else:
+                self.client.vote_post(post.id, 1)
+                return 1
+
+        def on_done(new_vote: int):
+            if new_vote == 1:
+                post.score += 1
+                post.own_vote = 1
+                msg = f"Upvoted post #{post.id} on e621 (+1)"
+            else:
+                post.score -= 1
+                post.own_vote = 0
+                msg = f"Removed upvote from post #{post.id} on e621"
+            self._update_post_interactions_ui(post)
+            self.statusBar().showMessage(msg, 4000)
+            self._log(msg)
+
+        def on_err(e):
+            err_msg = str(e)
+            self.statusBar().showMessage(f"Failed to vote: {err_msg}", 5000)
+            QMessageBox.warning(self, "Vote Failed", f"Could not vote on e621:\n{err_msg}")
+
+        self.api.submit(call, on_result=on_done, on_error=on_err)
+
+    def _update_post_interactions_ui(self, post: Post) -> None:
+        if hasattr(self, "inspector") and self.inspector._current_post:
+            if self.inspector._current_post.id == post.id:
+                self.inspector.update_interactions(post)
+        if self._preview_dlg and self._preview_dlg.isVisible():
+            if self._preview_dlg.post.id == post.id:
+                self._preview_dlg.update_interactions()
+
     # ============================================================== settings
     def _load_settings_into_ui(self) -> None:
         s = self.settings
@@ -1686,6 +1780,8 @@ class MainWindow(QMainWindow):
         dlg.search_tag.connect(self._search_only_tag)
         dlg.download.connect(lambda p: self._enqueue([p]))
         dlg.bank_toggle.connect(self._toggle_spank_bank)
+        dlg.favorite_toggle.connect(self._toggle_favorite)
+        dlg.upvote_toggle.connect(self._toggle_upvote)
         dlg.bank_pool_toggle.connect(self._toggle_pool_by_id_in_bank)
         dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=False)))
         dlg.view_pool_new_tab.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=True)))
@@ -1693,6 +1789,7 @@ class MainWindow(QMainWindow):
         dlg.post_changed.connect(lambda p: (
             dlg.set_in_bank(self.spank_bank.has(p.id)),
             dlg.set_pool_in_bank(any(self.spank_bank.has_pool(pid) for pid in p.pools) if p.pools else False),
+            dlg.update_interactions(),
             self._load_preview_image(dlg, p)
         ))
         self._load_preview_image(dlg, post)
@@ -1777,6 +1874,10 @@ class MainWindow(QMainWindow):
         in_bank = self.spank_bank.has(post.id)
         menu.addAction("Remove from Spank Bank" if in_bank else "Save to Spank Bank",
                        lambda: self._toggle_spank_bank(post))
+        menu.addAction("Remove favorite from e621" if post.is_favorited else "Favorite on e621",
+                       lambda: self._toggle_favorite(post))
+        menu.addAction("Remove upvote on e621" if post.own_vote == 1 else "Upvote on e621 (+1)",
+                       lambda: self._toggle_upvote(post))
         menu.addAction("Download", lambda: self._enqueue([post]))
         menu.addAction("Open on e621", lambda: QDesktopServices.openUrl(QUrl(post.page_url)))
         if saved := self.history.path_for(post.id):

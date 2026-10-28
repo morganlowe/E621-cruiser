@@ -85,6 +85,8 @@ class Post:
     tags: dict[str, list[str]] = field(default_factory=dict)
     pools: list[int] = field(default_factory=list)
     description: str = ""
+    is_favorited: bool = False
+    own_vote: int = 0
 
     @classmethod
     def from_json(cls, d: dict) -> "Post":
@@ -92,6 +94,7 @@ class Post:
         preview = d.get("preview") or {}
         sample = d.get("sample") or {}
         score = d.get("score") or {}
+        score_val = score.get("total") if isinstance(score, dict) else score
         return cls(
             id=int(d["id"]),
             md5=f.get("md5") or "",
@@ -105,11 +108,13 @@ class Post:
             height=int(f.get("height") or 0),
             size=int(f.get("size") or 0),
             rating=d.get("rating") or "",
-            score=int(score.get("total") or 0),
+            score=int(score_val or 0),
             fav_count=int(d.get("fav_count") or 0),
             tags={k: list(v) for k, v in (d.get("tags") or {}).items()},
             pools=list(d.get("pools") or []),
             description=d.get("description") or "",
+            is_favorited=bool(d.get("is_favorited", False)),
+            own_vote=int(d.get("own_vote") or 0),
         )
 
     @property
@@ -224,6 +229,98 @@ class E621Client:
             except ValueError as e:
                 raise ApiError("Invalid JSON response from e621.") from e
         raise ApiError("Request failed after retries.")
+
+    def _post(self, path: str, data: dict | None = None, params: dict | None = None, retries: int = 2):
+        if not self.authenticated:
+            raise ApiError("This action requires logging in with your e621 username and API key in Settings.")
+        for attempt in range(retries + 1):
+            self._limiter.wait()
+            try:
+                r = self.session.post(BASE_URL + path, data=data, params=params, timeout=30)
+            except requests.RequestException as e:
+                if attempt == retries:
+                    raise ApiError(f"Network error: {e}") from e
+                time.sleep(2 ** attempt)
+                continue
+            if r.status_code in (429, 500, 502, 503, 504, 520, 521, 522) and attempt < retries:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            if r.status_code == 401:
+                raise ApiError("Authentication failed. Check your username and API key in Settings.")
+            if r.status_code == 403:
+                raise ApiError("Access denied (403). Your account may not have permission for this action.")
+            if r.status_code == 422:
+                try:
+                    err = r.json()
+                    msg = err.get("message") or err.get("errors") or r.text[:200]
+                except Exception:
+                    msg = r.text[:200]
+                raise ApiError(f"e621: {msg}")
+            if not r.ok:
+                raise ApiError(f"HTTP {r.status_code}: {r.text[:200]}")
+            try:
+                return r.json()
+            except ValueError:
+                return {}
+        raise ApiError("Request failed after retries.")
+
+    def _delete(self, path: str, params: dict | None = None, retries: int = 2):
+        if not self.authenticated:
+            raise ApiError("This action requires logging in with your e621 username and API key in Settings.")
+        for attempt in range(retries + 1):
+            self._limiter.wait()
+            try:
+                r = self.session.delete(BASE_URL + path, params=params, timeout=30)
+            except requests.RequestException as e:
+                if attempt == retries:
+                    raise ApiError(f"Network error: {e}") from e
+                time.sleep(2 ** attempt)
+                continue
+            if r.status_code in (429, 500, 502, 503, 504, 520, 521, 522) and attempt < retries:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            if r.status_code == 401:
+                raise ApiError("Authentication failed. Check your username and API key in Settings.")
+            if r.status_code == 403:
+                raise ApiError("Access denied (403).")
+            if r.status_code == 404:
+                return {}
+            if not r.ok:
+                raise ApiError(f"HTTP {r.status_code}: {r.text[:200]}")
+            try:
+                return r.json()
+            except ValueError:
+                return {}
+        raise ApiError("Request failed after retries.")
+
+    # ----------------------------------------------------------- interactions
+    def add_favorite(self, post_id: int) -> dict:
+        """Add post to authenticated user's favorites on e621 (credits the artist)."""
+        try:
+            return self._post("/favorites.json", data={"post_id": str(post_id)})
+        except ApiError as e:
+            if "already favorited" in str(e).lower():
+                return {"is_favorited": True}
+            raise
+
+    def remove_favorite(self, post_id: int) -> bool:
+        """Remove post from authenticated user's favorites on e621."""
+        try:
+            self._delete(f"/favorites/{post_id}.json")
+        except ApiError as e:
+            if "not favorited" in str(e).lower() or "not found" in str(e).lower():
+                return True
+            raise
+        return True
+
+    def vote_post(self, post_id: int, score: int = 1) -> dict:
+        """Vote on post (+1 for upvote, -1 for downvote) on e621."""
+        return self._post(f"/posts/{post_id}/votes.json", data={"score": str(score)})
+
+    def remove_vote(self, post_id: int) -> bool:
+        """Remove vote on post on e621."""
+        self._delete(f"/posts/{post_id}/votes.json")
+        return True
 
     # ----------------------------------------------------------------- posts
     def search_posts(self, tags: str, page: int | str = 1, limit: int = POSTS_PER_PAGE) -> list[Post]:

@@ -702,6 +702,8 @@ class PostInspector(QWidget):
     preview_requested = Signal(object)
     download_requested = Signal(object)
     bank_toggle_requested = Signal(object)
+    favorite_toggle_requested = Signal(object)
+    upvote_toggle_requested = Signal(object)
     view_pool_requested = Signal(int)
     view_pool_new_tab_requested = Signal(int)
     bank_pool_requested = Signal(int)
@@ -741,6 +743,23 @@ class PostInspector(QWidget):
         btn_row.addWidget(self.btn_preview)
         btn_row.addWidget(self.btn_bank)
         btn_row.addWidget(self.btn_download)
+
+        # e621 Site Interactions (Favorite / Upvote)
+        self.btn_fav = QPushButton("Favorite")
+        self.btn_fav.setEnabled(False)
+        self.btn_fav.setToolTip("Like and favorite on e621 (credits the artist)")
+        self.btn_fav.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.btn_fav.clicked.connect(self._emit_favorite_toggle)
+
+        self.btn_upvote = QPushButton("▲ +1")
+        self.btn_upvote.setEnabled(False)
+        self.btn_upvote.setToolTip("Upvote on e621 (increases post score)")
+        self.btn_upvote.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.btn_upvote.clicked.connect(self._emit_upvote_toggle)
+
+        interact_row = QHBoxLayout()
+        interact_row.addWidget(self.btn_fav, 1)
+        interact_row.addWidget(self.btn_upvote)
 
         # Pool actions
         self.btn_view_pool = QPushButton("View Pool")
@@ -789,6 +808,7 @@ class PostInspector(QWidget):
         layout.addWidget(self.thumb_label)
         layout.addWidget(self.info_label)
         layout.addLayout(btn_row)
+        layout.addLayout(interact_row)
         layout.addWidget(self.pool_widget)
         layout.addWidget(self.tag_header)
         layout.addWidget(self.filter_edit)
@@ -861,6 +881,48 @@ class PostInspector(QWidget):
         if self._current_post:
             self.bank_toggle_requested.emit(self._current_post)
 
+    def _emit_favorite_toggle(self) -> None:
+        if self._current_post:
+            self.favorite_toggle_requested.emit(self._current_post)
+
+    def _emit_upvote_toggle(self) -> None:
+        if self._current_post:
+            self.upvote_toggle_requested.emit(self._current_post)
+
+    def update_interactions(self, post: Post | None = None) -> None:
+        p = post or self._current_post
+        if not p:
+            self.btn_fav.setEnabled(False)
+            self.btn_fav.setText("Favorite")
+            self.btn_fav.setStyleSheet("font-weight: bold; padding: 4px;")
+            self.btn_fav.setToolTip("Like and favorite on e621 (credits the artist)")
+            self.btn_upvote.setEnabled(False)
+            self.btn_upvote.setText("▲ +1")
+            self.btn_upvote.setStyleSheet("font-weight: bold; padding: 4px;")
+            self.btn_upvote.setToolTip("Upvote on e621 (increases post score)")
+            return
+
+        self.btn_fav.setEnabled(True)
+        self.btn_upvote.setEnabled(True)
+
+        if p.is_favorited:
+            self.btn_fav.setText(f"Favorited ({p.fav_count})")
+            self.btn_fav.setStyleSheet("color: #ffffff; background-color: #e11d48; font-weight: bold; padding: 4px; border-radius: 4px;")
+            self.btn_fav.setToolTip("Favorited on e621 (click to remove favorite)")
+        else:
+            self.btn_fav.setText(f"Favorite ({p.fav_count})")
+            self.btn_fav.setStyleSheet("color: #fda4af; font-weight: bold; padding: 4px;")
+            self.btn_fav.setToolTip("Like and favorite on e621 (credits the artist)")
+
+        if p.own_vote == 1:
+            self.btn_upvote.setText(f"▲ Voted ({p.score})")
+            self.btn_upvote.setStyleSheet("color: #ffffff; background-color: #16a34a; font-weight: bold; padding: 4px; border-radius: 4px;")
+            self.btn_upvote.setToolTip("Upvoted on e621 (click to remove vote)")
+        else:
+            self.btn_upvote.setText(f"▲ +1 ({p.score})")
+            self.btn_upvote.setStyleSheet("color: #86efac; font-weight: bold; padding: 4px;")
+            self.btn_upvote.setToolTip("Upvote on e621 (increases post score)")
+
     def set_in_bank(self, in_bank: bool) -> None:
         if in_bank:
             self.btn_bank.setText("In Bank")
@@ -888,6 +950,7 @@ class PostInspector(QWidget):
             self.btn_download.setEnabled(False)
             self.set_in_bank(False)
             self.set_pool_in_bank(False)
+            self.update_interactions(None)
             self.pool_widget.setVisible(False)
             self.tag_list.clear()
             return
@@ -899,6 +962,7 @@ class PostInspector(QWidget):
         self.btn_download.setEnabled(True)
         self.set_in_bank(in_bank)
         self.set_pool_in_bank(pool_in_bank)
+        self.update_interactions(post)
 
         if post.pools:
             self.pool_widget.setVisible(True)
@@ -917,6 +981,7 @@ class PostInspector(QWidget):
         if mb > 0:
             details.append(f"{mb:.1f} MB")
         details.append(f"Score {post.score}")
+        details.append(f"Favs {post.fav_count}")
         if post.rating:
             details.append(f"Rating {post.rating.upper()}")
         self.info_label.setText(" · ".join(details))
@@ -947,6 +1012,8 @@ class PreviewDialog(QDialog):
     search_tag = Signal(str)
     download = Signal(object)
     bank_toggle = Signal(object)
+    favorite_toggle = Signal(object)
+    upvote_toggle = Signal(object)
     post_changed = Signal(object)
     view_pool = Signal(int)
     view_pool_new_tab = Signal(int)
@@ -998,6 +1065,14 @@ class PreviewDialog(QDialog):
         self.fs_btn = QPushButton("Fullscreen (F11)")
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
 
+        self.fav_btn = QPushButton("Favorite (L)")
+        self.fav_btn.setToolTip("Favorite on e621 (L) - credits the artist")
+        self.fav_btn.clicked.connect(self._on_favorite_clicked)
+
+        self.vote_btn = QPushButton("▲ +1 (U)")
+        self.vote_btn.setToolTip("Upvote on e621 (U) - increases score")
+        self.vote_btn.clicked.connect(self._on_upvote_clicked)
+
         self.bank_btn = QPushButton("+ Spank Bank (B)")
         self.bank_btn.setToolTip("Save/remove from Spank Bank for online viewing (B)")
         self.bank_btn.clicked.connect(self._on_bank_clicked)
@@ -1015,6 +1090,8 @@ class PreviewDialog(QDialog):
         top_bar.addStretch()
         top_bar.addWidget(self.tags_toggle_btn)
         top_bar.addWidget(self.fs_btn)
+        top_bar.addWidget(self.fav_btn)
+        top_bar.addWidget(self.vote_btn)
         top_bar.addWidget(self.bank_btn)
         top_bar.addWidget(self.dl_btn)
         top_bar.addWidget(self.close_btn)
@@ -1101,6 +1178,18 @@ class PreviewDialog(QDialog):
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("font-size: 12px; color: #cbd5e1; padding: 4px 0;")
 
+        self.side_fav_btn = QPushButton("Favorite (e621)")
+        self.side_fav_btn.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.side_fav_btn.clicked.connect(self._on_favorite_clicked)
+
+        self.side_vote_btn = QPushButton("▲ +1")
+        self.side_vote_btn.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.side_vote_btn.clicked.connect(self._on_upvote_clicked)
+
+        side_interact_row = QHBoxLayout()
+        side_interact_row.addWidget(self.side_fav_btn, 1)
+        side_interact_row.addWidget(self.side_vote_btn)
+
         # Sidebar pool action buttons
         self.side_pool_view_btn = QPushButton("View Pool")
         self.side_pool_view_btn.setStyleSheet("font-weight: bold; color: #a78bfa; padding: 5px;")
@@ -1149,6 +1238,7 @@ class PreviewDialog(QDialog):
         only_btn.clicked.connect(self._search_selected)
 
         rl.addWidget(self.info_label)
+        rl.addLayout(side_interact_row)
         rl.addWidget(self.side_bank_btn)
         rl.addWidget(self.side_pool_widget)
         rl.addWidget(QLabel("Tags (click to add/remove from search):"))
@@ -1213,6 +1303,48 @@ class PreviewDialog(QDialog):
 
     def _on_bank_clicked(self) -> None:
         self.bank_toggle.emit(self.post)
+
+    def _on_favorite_clicked(self) -> None:
+        self.favorite_toggle.emit(self.post)
+
+    def _on_upvote_clicked(self) -> None:
+        self.upvote_toggle.emit(self.post)
+
+    def update_interactions(self) -> None:
+        p = self.post
+        if p.is_favorited:
+            txt_fav = f"Favorited ({p.fav_count}) (L)"
+            txt_side = f"Favorited ({p.fav_count})"
+            style_fav = "color: #ffffff; background-color: #e11d48; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
+            self.fav_btn.setToolTip("Favorited on e621 (click to remove favorite)")
+            self.side_fav_btn.setToolTip("Favorited on e621 (click to remove favorite)")
+        else:
+            txt_fav = f"Favorite ({p.fav_count}) (L)"
+            txt_side = f"Favorite ({p.fav_count})"
+            style_fav = "color: #fda4af; font-weight: bold; padding: 4px 10px;"
+            self.fav_btn.setToolTip("Like and favorite on e621 (L) - credits the artist")
+            self.side_fav_btn.setToolTip("Like and favorite on e621 - credits the artist")
+        self.fav_btn.setText(txt_fav)
+        self.fav_btn.setStyleSheet(style_fav)
+        self.side_fav_btn.setText(txt_side)
+        self.side_fav_btn.setStyleSheet(style_fav)
+
+        if p.own_vote == 1:
+            txt_vote = f"▲ Voted ({p.score}) (U)"
+            txt_side_vote = f"▲ Voted ({p.score})"
+            style_vote = "color: #ffffff; background-color: #16a34a; font-weight: bold; padding: 4px 10px; border-radius: 4px;"
+            self.vote_btn.setToolTip("Upvoted on e621 (click to remove vote)")
+            self.side_vote_btn.setToolTip("Upvoted on e621 (click to remove vote)")
+        else:
+            txt_vote = f"▲ +1 ({p.score}) (U)"
+            txt_side_vote = f"▲ +1 ({p.score})"
+            style_vote = "color: #86efac; font-weight: bold; padding: 4px 10px;"
+            self.vote_btn.setToolTip("Upvote on e621 (U) - increases score")
+            self.side_vote_btn.setToolTip("Upvote on e621 - increases score")
+        self.vote_btn.setText(txt_vote)
+        self.vote_btn.setStyleSheet(style_vote)
+        self.side_vote_btn.setText(txt_side_vote)
+        self.side_vote_btn.setStyleSheet(style_vote)
 
     def _reset_shuffle_queue(self) -> None:
         self._shuffle_queue.clear()
@@ -1364,6 +1496,7 @@ class PreviewDialog(QDialog):
 
         self.tag_list.set_post_tags(post.tags, self._active_query)
         self.filter_edit.clear()
+        self.update_interactions()
 
         if post.is_video or post.ext == "swf":
             self.image_label.setText(f"{post.ext.upper()} media file. Showing preview image.<br>"
@@ -1463,6 +1596,12 @@ class PreviewDialog(QDialog):
             return
         if e.key() == Qt.Key.Key_B:
             self._on_bank_clicked()
+            return
+        if e.key() == Qt.Key.Key_L:
+            self._on_favorite_clicked()
+            return
+        if e.key() == Qt.Key.Key_U:
+            self._on_upvote_clicked()
             return
         if e.key() == Qt.Key.Key_S:
             self.toggle_slideshow()
