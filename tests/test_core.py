@@ -182,6 +182,41 @@ class WidgetQueryTests(unittest.TestCase):
         s2 = Settings.from_dict(data)
         self.assertEqual(s2.quick_blacklist, ["gore", "young"])
 
+    def test_collapsible_section(self):
+        from PySide6.QtWidgets import QLabel
+        from e621cruiser.widgets import CollapsibleSection
+        sec = CollapsibleSection("Test Section", expanded=False)
+        lbl = QLabel("Inner text")
+        sec.add_widget(lbl)
+        self.assertFalse(sec.is_expanded())
+        self.assertTrue(sec._body.isHidden())
+        self.assertIn("[+] Test Section", sec._header.text())
+
+        # Toggle expanded
+        sec.set_expanded(True)
+        self.assertTrue(sec.is_expanded())
+        self.assertFalse(sec._body.isHidden())
+        self.assertIn("[-] Test Section", sec._header.text())
+
+        # Test badge
+        sec.set_badge("3 active")
+        self.assertIn("[3 active]", sec._header.text())
+
+    def test_main_window_collapsible_and_width(self):
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        s = Settings(expand_blacklist=False, expand_saved=False)
+        w = MainWindow(s)
+        # Verify left panel minimum width is at least 350 to prevent clipping
+        self.assertGreaterEqual(w.tabs.minimumWidth(), 350)
+        self.assertFalse(w.bl_section.is_expanded())
+        self.assertFalse(w.saved_section.is_expanded())
+
+        # Toggle blacklist
+        w.bl_section.set_expanded(True)
+        self.assertTrue(w.bl_section.is_expanded())
+        w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

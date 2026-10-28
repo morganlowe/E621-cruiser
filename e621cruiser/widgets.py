@@ -7,7 +7,7 @@ from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPixmap, QStandardItem, QStandardItemModel)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QCompleter, QDialog,
-                               QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+                               QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLayout,
                                QLineEdit, QListView, QListWidget, QListWidgetItem,
                                QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
                                QVBoxLayout, QWidget)
@@ -21,6 +21,114 @@ CATEGORY_COLORS = {
 }
 RATING_COLORS = {"s": "#3a9e3a", "q": "#d9a400", "e": "#d23b3b"}
 TILE = 150
+
+
+# -------------------------------------------------------- collapsible sections
+class CollapsibleSection(QWidget):
+    """Collapsible panel with a clickable header toggle button."""
+    toggled = Signal(bool)
+
+    def __init__(self, title: str, expanded: bool = False, badge_text: str = "",
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self._expanded = expanded
+        self._badge_text = badge_text
+
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(0, 3, 0, 3)
+        main_lay.setSpacing(0)
+
+        self._header = QPushButton()
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.setCheckable(True)
+        self._header.setChecked(self._expanded)
+        self._header.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                font-weight: bold;
+                padding: 6px 10px;
+                background-color: #21252b;
+                border: 1px solid #3b4048;
+                border-radius: 4px;
+                color: #d7dae0;
+            }
+            QPushButton:hover {
+                background-color: #282c34;
+                border-color: #528bff;
+            }
+            QPushButton:checked {
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+                background-color: #252931;
+            }
+        """)
+        self._header.clicked.connect(self._on_header_clicked)
+
+        self._body = QWidget()
+        self._body.setObjectName("collapsibleBody")
+        self._body.setStyleSheet("""
+            QWidget#collapsibleBody {
+                background-color: #1a1d23;
+                border: 1px solid #3b4048;
+                border-top: none;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }
+            QCheckBox {
+                color: #d7dae0;
+                spacing: 5px;
+                background: transparent;
+            }
+            QLabel {
+                color: #9da5b4;
+                background: transparent;
+            }
+            QPushButton {
+                padding: 4px 8px;
+            }
+        """)
+        self._body_lay = QVBoxLayout(self._body)
+        self._body_lay.setContentsMargins(8, 8, 8, 8)
+        self._body_lay.setSpacing(6)
+
+        main_lay.addWidget(self._header)
+        main_lay.addWidget(self._body)
+
+        self._update_text()
+        self._body.setVisible(self._expanded)
+
+    def _update_text(self) -> None:
+        prefix = "[-] " if self._expanded else "[+] "
+        badge = f"  [{self._badge_text}]" if self._badge_text else ""
+        self._header.setText(f"{prefix}{self._title}{badge}")
+
+    def _on_header_clicked(self) -> None:
+        self.set_expanded(self._header.isChecked())
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = bool(expanded)
+        self._header.setChecked(self._expanded)
+        self._body.setVisible(self._expanded)
+        self._update_text()
+        self.toggled.emit(self._expanded)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_badge(self, text: str) -> None:
+        self._badge_text = text
+        self._update_text()
+
+    @property
+    def body_layout(self) -> QVBoxLayout:
+        return self._body_lay
+
+    def add_widget(self, w: QWidget) -> None:
+        self._body_lay.addWidget(w)
+
+    def add_layout(self, lay: QLayout) -> None:
+        self._body_lay.addLayout(lay)
 
 
 # --------------------------------------------------------------------- tags
@@ -250,7 +358,11 @@ class TagLineEdit(QLineEdit):
             self._popup.hide()
 
     def hideEvent(self, e):  # noqa: N802
-        self._popup.hide()
+        try:
+            if hasattr(self, "_popup") and self._popup is not None:
+                self._popup.hide()
+        except RuntimeError:
+            pass
         super().hideEvent(e)
 
 

@@ -20,7 +20,8 @@ from .downloader import DownloadManager
 from .settings import (DATA_DIR, MEDIA_FILTERS, MIN_SCORE_ANY, QUICK_BLACKLIST_ITEMS,
                        Settings, full_blacklist)
 from .storage import ORGANIZE_MODES, DownloadJob, History
-from .widgets import PostGrid, PostInspector, PreviewDialog, SettingsDialog, TagLineEdit, TagListWidget
+from .widgets import (CollapsibleSection, PostGrid, PostInspector, PreviewDialog,
+                      SettingsDialog, TagLineEdit, TagListWidget)
 from .workers import Runner, fetch_image
 
 ORDERS = [("Newest", ""), ("Highest score", "order:score"), ("Most favorited", "order:favcount"),
@@ -192,16 +193,23 @@ class MainWindow(QMainWindow):
         self.inspector.preview_requested.connect(self._preview)
         self.inspector.download_requested.connect(lambda p: self._enqueue([p]))
         self.inspector.setMinimumWidth(260)
+        self.tabs.setMinimumWidth(350)
 
-        split = QSplitter()
-        split.addWidget(self.tabs)
-        split.addWidget(center_widget)
-        split.addWidget(self.inspector)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setStretchFactor(2, 0)
-        split.setSizes([260, 860, 280])
-        self.setCentralWidget(split)
+        self.split = QSplitter()
+        self.split.addWidget(self.tabs)
+        self.split.addWidget(center_widget)
+        self.split.addWidget(self.inspector)
+        self.split.setStretchFactor(0, 0)
+        self.split.setStretchFactor(1, 1)
+        self.split.setStretchFactor(2, 0)
+        if self.settings.splitter_state:
+            try:
+                self.split.restoreState(QByteArray.fromBase64(self.settings.splitter_state.encode()))
+            except Exception:
+                self.split.setSizes([360, 760, 280])
+        else:
+            self.split.setSizes([360, 760, 280])
+        self.setCentralWidget(self.split)
 
         self.auth_label = QLabel()
         self.statusBar().addPermanentWidget(self.auth_label)
@@ -254,14 +262,16 @@ class MainWindow(QMainWindow):
         go.setStyleSheet("font-weight: bold; padding: 6px;")
         go.clicked.connect(lambda: self._start_search())
 
-        # Quick Blacklist Group
-        bl_box = QGroupBox("Quick Blacklist (Exclude)")
-        bl_lay = QVBoxLayout(bl_box)
+        # Quick Blacklist Collapsible Section
+        self.bl_section = CollapsibleSection("Quick Blacklist (Exclude)", expanded=self.settings.expand_blacklist)
+        self.bl_section.toggled.connect(self._on_blacklist_section_toggled)
         bl_hint = QLabel("<small>One-click exclusions applied to query and local filter.</small>")
         bl_hint.setWordWrap(True)
-        bl_lay.addWidget(bl_hint)
+        self.bl_section.add_widget(bl_hint)
 
         grid_lay = QGridLayout()
+        grid_lay.setHorizontalSpacing(8)
+        grid_lay.setVerticalSpacing(4)
         self.quick_bl_checkboxes: dict[str, QCheckBox] = {}
         row, col = 0, 0
         for tag_id, label in QUICK_BLACKLIST_ITEMS:
@@ -273,7 +283,7 @@ class MainWindow(QMainWindow):
             if col > 1:
                 col = 0
                 row += 1
-        bl_lay.addLayout(grid_lay)
+        self.bl_section.add_layout(grid_lay)
 
         btn_row = QHBoxLayout()
         sel_common = QPushButton("Select Common")
@@ -283,49 +293,72 @@ class MainWindow(QMainWindow):
         clear_bl.clicked.connect(self._clear_quick_blacklist)
         btn_row.addWidget(sel_common)
         btn_row.addWidget(clear_bl)
-        bl_lay.addLayout(btn_row)
+        self.bl_section.add_layout(btn_row)
 
-        saved_box = QGroupBox("Saved searches (double-click to run)")
+        # Saved Searches Collapsible Section
+        self.saved_section = CollapsibleSection("Saved Searches", expanded=self.settings.expand_saved)
+        self.saved_section.toggled.connect(self._on_saved_section_toggled)
+        saved_hint = QLabel("<small>Double-click search below to run.</small>")
+        self.saved_section.add_widget(saved_hint)
+
         self.saved_list = QListWidget()
+        self.saved_list.setMaximumHeight(140)
         self.saved_list.itemDoubleClicked.connect(self._run_saved)
         save_btn = QPushButton("Save current")
         save_btn.clicked.connect(self._save_search)
         del_btn = QPushButton("Remove")
         del_btn.clicked.connect(self._remove_saved)
-        sl = QVBoxLayout(saved_box)
-        sl.addWidget(self.saved_list)
+        self.saved_section.add_widget(self.saved_list)
         br = QHBoxLayout()
         br.addWidget(save_btn)
         br.addWidget(del_btn)
-        sl.addLayout(br)
+        self.saved_section.add_layout(br)
 
         lay.addWidget(QLabel("Tags:"))
         lay.addWidget(self.tag_edit)
         lay.addWidget(hint)
         lay.addLayout(form)
         lay.addWidget(go)
-        lay.addWidget(bl_box)
-        lay.addWidget(saved_box)
+        lay.addWidget(self.bl_section)
+        lay.addWidget(self.saved_section)
         lay.addStretch()
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setWidget(w)
         return scroll
+
+    def _on_blacklist_section_toggled(self, expanded: bool) -> None:
+        self.settings.expand_blacklist = expanded
+
+    def _on_saved_section_toggled(self, expanded: bool) -> None:
+        self.settings.expand_saved = expanded
+
+    def _update_blacklist_badge(self) -> None:
+        cnt = len(self.settings.quick_blacklist)
+        self.bl_section.set_badge(f"{cnt} active" if cnt else "")
+
+    def _update_saved_badge(self) -> None:
+        cnt = self.saved_list.count()
+        self.saved_section.set_badge(f"{cnt} saved" if cnt else "")
 
     def _on_quick_blacklist_toggled(self) -> None:
         self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         self.blacklist = Blacklist(full_blacklist(self.settings))
+        self._update_blacklist_badge()
 
     def _select_common_blacklist(self) -> None:
         common = {"gore", "scat", "watersports", "young", "type:swf"}
         for tag, cb in self.quick_bl_checkboxes.items():
             cb.setChecked(tag in common)
+        self._update_blacklist_badge()
 
     def _clear_quick_blacklist(self) -> None:
         for cb in self.quick_bl_checkboxes.values():
             cb.setChecked(False)
+        self._update_blacklist_badge()
 
     def _build_pools_tab(self) -> QWidget:
         w = QWidget()
@@ -390,11 +423,15 @@ class MainWindow(QMainWindow):
         self.cb_in_pool.setChecked(s.pool_only)
         for tag, cb in self.quick_bl_checkboxes.items():
             cb.setChecked(tag in s.quick_blacklist)
+        self.bl_section.set_expanded(s.expand_blacklist)
+        self.saved_section.set_expanded(s.expand_saved)
+        self._update_blacklist_badge()
         self.min_score.setValue(s.min_score)
         self.order.setCurrentIndex(max(0, self.order.findData(s.order)))
         self.fav_user.setText(s.favorites_user)
         self.saved_list.clear()
         self.saved_list.addItems(s.saved_searches)
+        self._update_saved_badge()
 
     def _save_ui_to_settings(self) -> None:
         s = self.settings
@@ -406,11 +443,15 @@ class MainWindow(QMainWindow):
         s.media_filter = self.media_filter.currentData() or ""
         s.pool_only = self.cb_in_pool.isChecked()
         s.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
+        s.expand_blacklist = self.bl_section.is_expanded()
+        s.expand_saved = self.saved_section.is_expanded()
         s.min_score = self.min_score.value()
         s.order = self.order.currentData()
         s.favorites_user = self.fav_user.text().strip()
         s.saved_searches = [self.saved_list.item(i).text() for i in range(self.saved_list.count())]
         s.window_geometry = bytes(self.saveGeometry().toBase64()).decode()
+        if hasattr(self, "split"):
+            s.splitter_state = bytes(self.split.saveState().toBase64()).decode()
 
     def _apply_settings(self) -> None:
         s = self.settings
@@ -613,12 +654,14 @@ class MainWindow(QMainWindow):
         existing = [self.saved_list.item(i).text() for i in range(self.saved_list.count())]
         if q and q not in existing:
             self.saved_list.addItem(q)
+            self._update_saved_badge()
             self._save_ui_to_settings()
             self.settings.save()
 
     def _remove_saved(self) -> None:
         for it in self.saved_list.selectedItems():
             self.saved_list.takeItem(self.saved_list.row(it))
+        self._update_saved_badge()
         self._save_ui_to_settings()
         self.settings.save()
 

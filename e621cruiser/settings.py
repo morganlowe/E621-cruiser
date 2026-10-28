@@ -86,9 +86,12 @@ class Settings:
     media_filter: str = ""
     pool_only: bool = False
     quick_blacklist: list[str] = field(default_factory=list)
+    expand_blacklist: bool = False
+    expand_saved: bool = False
     saved_searches: list[str] = field(default_factory=list)
     favorites_user: str = ""
     window_geometry: str = ""
+    splitter_state: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":
