@@ -25,9 +25,12 @@
   - **Upvote (+1)**: Direct score voting via `POST /posts/<id>/votes.json` to boost post visibility in site-wide top-rated searches.
   - **Live Indicators**: Shows current favorite counts and score badges in the Inspector and full-screen viewer.
 - **Spank Bank (Online Bookmarks & Slideshows)**:
-  - Save posts and entire multi-page pools to a persistent collection for online viewing without downloading files locally.
-  - Dedicated **Pools** and **Posts** tabs with instant filtering by title, artist, tag, or ID.
+  - Save posts, entire multi-page pools, and favorite **artists** to a persistent collection for online viewing without downloading files locally.
+  - Dedicated **Pools**, **Posts**, and **Artists** tabs with instant filtering by title, artist, tag, or ID.
+  - **Latest From All Saved Artists** one-click combined feed (`~artist` OR query) plus per-artist slideshow playback.
   - Full-screen automated slideshow playback with custom timers (1–300s), reading order, and randomized shuffle modes.
+- **One-Click Artist Browsing**:
+  - Click any artist name link in the Post Inspector or Full-Screen Viewer (or use the **View Artist** / **+ Tab** / **+ Bank Artist** action buttons and context menus) to browse all of their artwork just like on e621.
 - **Tabbed Browsing & Navigation History**:
   - Open searches and pools in separate tabs (`Ctrl+T`, `Ctrl+W`).
   - Backward and forward history navigation (`Alt+Left`, `Alt+Right`) per tab with scroll position and query state retention.
@@ -124,9 +127,10 @@ E621 Cruiser connects directly to e621's account interaction API, allowing you t
 
 The **Spank Bank** provides a personal, persistent bookmarking system for online viewing without downloading files to disk:
 
-* **Posts & Pools Separation**:
+* **Pools, Posts & Artists Separation**:
   * **Pools Tab**: Bookmark entire comics or themed series with post counts and reading order.
   * **Posts Tab**: Bookmark individual standalone illustrations and animations.
+  * **Artists Tab**: Bookmark favorite artists directly from any post or by name, open their gallery in a tab, launch slideshows of their work, or view a combined **Latest From All Saved Artists** feed.
 * **Full-Screen Automated Slideshows**:
   * Play whole pools or your entire saved post bank in full-screen mode.
   * Set timer intervals (1 to 300 seconds) with automated looping.

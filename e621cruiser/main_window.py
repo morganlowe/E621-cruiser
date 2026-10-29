@@ -1,6 +1,7 @@
 """Main application window."""
 from __future__ import annotations
 
+import html
 import os
 from dataclasses import dataclass
 from functools import partial
@@ -21,7 +22,7 @@ from .settings import (DATA_DIR, MEDIA_FILTERS, MIN_SCORE_ANY, QUICK_BLACKLIST_I
                        Settings, full_blacklist)
 from .storage import ORGANIZE_MODES, DownloadJob, History, SpankBank
 from .widgets import (CollapsibleSection, PostGrid, PostInspector, PreviewDialog,
-                      SettingsDialog, TagLineEdit, TagListWidget)
+                      SettingsDialog, TagLineEdit, TagListWidget, artist_page_url)
 from .workers import Runner, fetch_image
 
 ORDERS = [("Newest", ""), ("Highest score", "order:score"), ("Most favorited", "order:favcount"),
@@ -30,7 +31,7 @@ ORDERS = [("Newest", ""), ("Highest score", "order:score"), ("Most favorited", "
 
 @dataclass
 class Source:
-    kind: str            # "search" | "pool" | "favorites"
+    kind: str            # "search" | "pool" | "favorites" | "artist" | "spank_bank"
     label: str           # used for folder names in "By search" mode
     query: str = ""      # full API tag query
     pool: Pool | None = None
@@ -85,7 +86,9 @@ class ResultTab(QWidget):
         self.btn_forward.clicked.connect(self.forward_requested)
 
         self.result_label = QLabel("Search for tags or open a pool to get started.")
-        self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.result_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse
+                                                  | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        self.result_label.setOpenExternalLinks(True)
         self.result_label.setStyleSheet("padding: 0 4px; font-size: 13px; color: #d7dae0;")
 
         self.btn_slideshow = QPushButton("Slideshow")
@@ -151,13 +154,16 @@ class ResultTab(QWidget):
         lay.addWidget(self.grid, 1)
 
     def update_nav_buttons(self, in_bank: bool = False) -> None:
+        """Refresh nav buttons. ``in_bank`` refers to the current pool or artist source."""
         self.btn_back.setEnabled(bool(self.history_back))
         self.btn_forward.setEnabled(bool(self.history_forward))
         is_pool = self.source.kind == "pool"
-        self.btn_bank_pool.setVisible(is_pool)
-        if is_pool:
+        is_artist = self.source.kind == "artist"
+        self.btn_bank_pool.setVisible(is_pool or is_artist)
+        if is_pool or is_artist:
+            what = "pool" if is_pool else "artist"
             if in_bank:
-                self.btn_bank_pool.setText("In Bank")
+                self.btn_bank_pool.setText("In Bank" if is_pool else "Artist In Bank")
                 self.btn_bank_pool.setStyleSheet("""
                     QPushButton {
                         font-weight: bold;
@@ -170,9 +176,9 @@ class ResultTab(QWidget):
                         background-color: #b45309;
                     }
                 """)
-                self.btn_bank_pool.setToolTip("Pool is saved in Spank Bank (click to remove)")
+                self.btn_bank_pool.setToolTip(f"This {what} is saved in Spank Bank (click to remove)")
             else:
-                self.btn_bank_pool.setText("+ Bank")
+                self.btn_bank_pool.setText("+ Bank" if is_pool else "+ Bank Artist")
                 self.btn_bank_pool.setStyleSheet("""
                     QPushButton {
                         font-weight: bold;
@@ -185,7 +191,8 @@ class ResultTab(QWidget):
                         background-color: #4b5563;
                     }
                 """)
-                self.btn_bank_pool.setToolTip("Save this whole pool to Spank Bank for later online viewing")
+                self.btn_bank_pool.setToolTip("Save this whole pool to Spank Bank for later online viewing"
+                                              if is_pool else "Save this artist to Spank Bank")
         self.btn_dl_pool.setVisible(is_pool)
         if is_pool and self.source.pool:
             self.btn_dl_pool.setText(f"Download Pool ({self.source.pool.post_count} posts)")
@@ -196,7 +203,7 @@ class ResultTab(QWidget):
 class MainWindow(QMainWindow):
     fetch_status = Signal(str)  # emitted from worker threads
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, data_dir: Path | None = None) -> None:
         super().__init__()
         self.setWindowTitle("E621 Cruiser")
         assets = Path(__file__).resolve().parent.parent / "assets"
@@ -205,8 +212,9 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
         self.settings = settings if settings is not None else Settings.load()
-        self.history = History(DATA_DIR / "history.db")
-        self.spank_bank = SpankBank(DATA_DIR / "spank_bank.db")
+        data_dir = Path(data_dir) if data_dir is not None else DATA_DIR
+        self.history = History(data_dir / "history.db")
+        self.spank_bank = SpankBank(data_dir / "spank_bank.db")
         self.api = Runner(2, self)      # API calls (rate-limited inside the client)
         self.tag_api = Runner(1, self)  # Dedicated runner for tag autocomplete
         self.thumbs = Runner(6, self)   # thumbnails / previews from the static CDN
@@ -422,6 +430,10 @@ class MainWindow(QMainWindow):
         self.inspector.view_pool_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=False))
         self.inspector.view_pool_new_tab_requested.connect(lambda pid: self._open_pool_by_id(pid, new_tab=True))
         self.inspector.download_pool_requested.connect(self._download_pool_by_id)
+        self.inspector.artist_view_requested.connect(lambda a: self._open_artist(a, new_tab=False))
+        self.inspector.artist_view_new_tab_requested.connect(lambda a: self._open_artist(a, new_tab=True))
+        self.inspector.artist_bank_toggle_requested.connect(self._toggle_artist_in_bank)
+        self.inspector.tag_list.artist_in_bank = self.spank_bank.has_artist
         self.inspector.setMinimumWidth(260)
         self.tabs.setMinimumWidth(350)
 
@@ -703,8 +715,9 @@ class MainWindow(QMainWindow):
         self.bank_subtabs = QTabWidget()
         self.bank_subtabs.addTab(self._build_spank_bank_pools_widget(), "Pools (0)")
         self.bank_subtabs.addTab(self._build_spank_bank_posts_widget(), "Posts (0)")
+        self.bank_subtabs.addTab(self._build_spank_bank_artists_widget(), "Artists (0)")
 
-        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online pools and posts for later viewing without "
+        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online pools, posts and artists for later viewing without "
                      "downloading them locally. Play full-screen slideshows with timers in reading order or shuffle.</small>")
         tip.setWordWrap(True)
 
@@ -818,6 +831,81 @@ class MainWindow(QMainWindow):
         lay.addLayout(btn_row3)
         return w
 
+    def _build_spank_bank_artists_widget(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(2, 2, 2, 2)
+
+        self.bank_artists_summary_label = QLabel("0 saved artists")
+        self.bank_artists_summary_label.setStyleSheet("font-weight: bold; font-size: 13px; color: #fbbf24;")
+
+        add_row = QHBoxLayout()
+        self.bank_artist_add_edit = QLineEdit()
+        self.bank_artist_add_edit.setPlaceholderText("Add artist by name…")
+        self.bank_artist_add_edit.returnPressed.connect(self._add_bank_artist_from_edit)
+        add_btn = QPushButton("+ Add")
+        add_btn.clicked.connect(self._add_bank_artist_from_edit)
+        add_row.addWidget(self.bank_artist_add_edit, 1)
+        add_row.addWidget(add_btn)
+
+        self.bank_artists_filter_edit = QLineEdit()
+        self.bank_artists_filter_edit.setPlaceholderText("Filter saved artists…")
+        self.bank_artists_filter_edit.setClearButtonEnabled(True)
+        self.bank_artists_filter_edit.textChanged.connect(self._filter_bank_artists_list)
+
+        self.bank_artists_list = QListWidget()
+        self.bank_artists_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.bank_artists_list.itemDoubleClicked.connect(
+            lambda it: self._open_artist(it.data(Qt.ItemDataRole.UserRole), new_tab=False))
+
+        btn_row1 = QHBoxLayout()
+        view_btn = QPushButton("View Artist")
+        view_btn.setStyleSheet("font-weight: bold;")
+        view_btn.clicked.connect(lambda: self._open_bank_saved_artist(new_tab=False))
+        new_tab_btn = QPushButton("+ New Tab")
+        new_tab_btn.clicked.connect(lambda: self._open_bank_saved_artist(new_tab=True))
+        web_btn = QPushButton("e621 Page")
+        web_btn.setToolTip("Open the artist's page on e621")
+        web_btn.clicked.connect(self._open_bank_saved_artist_web)
+        btn_row1.addWidget(view_btn)
+        btn_row1.addWidget(new_tab_btn)
+        btn_row1.addWidget(web_btn)
+
+        feed_btn = QPushButton("Latest From All Saved Artists")
+        feed_btn.setStyleSheet("font-weight: bold; color: #fbbf24;")
+        feed_btn.setToolTip("One combined feed of the newest posts by every saved artist")
+        feed_btn.clicked.connect(lambda: self._open_bank_artists_feed(new_tab=False))
+
+        btn_row2 = QHBoxLayout()
+        slideshow_order_btn = QPushButton("Play Newest")
+        slideshow_order_btn.setStyleSheet("font-weight: bold; background-color: #1e3a8a; color: white;")
+        slideshow_order_btn.setToolTip("Slideshow of the selected artist's newest posts")
+        slideshow_order_btn.clicked.connect(lambda: self._play_bank_artist_slideshow(shuffle=False))
+        slideshow_shuffle_btn = QPushButton("Play Shuffle")
+        slideshow_shuffle_btn.setStyleSheet("font-weight: bold; background-color: #7c2d12; color: white;")
+        slideshow_shuffle_btn.setToolTip("Shuffled slideshow of the selected artist's posts")
+        slideshow_shuffle_btn.clicked.connect(lambda: self._play_bank_artist_slideshow(shuffle=True))
+        btn_row2.addWidget(slideshow_order_btn)
+        btn_row2.addWidget(slideshow_shuffle_btn)
+
+        btn_row3 = QHBoxLayout()
+        del_btn = QPushButton("Remove selected")
+        del_btn.clicked.connect(self._remove_selected_bank_artists)
+        clear_btn = QPushButton("Clear all artists")
+        clear_btn.clicked.connect(self._clear_bank_artists)
+        btn_row3.addWidget(del_btn)
+        btn_row3.addWidget(clear_btn)
+
+        lay.addWidget(self.bank_artists_summary_label)
+        lay.addLayout(add_row)
+        lay.addWidget(self.bank_artists_filter_edit)
+        lay.addWidget(self.bank_artists_list, 1)
+        lay.addLayout(btn_row1)
+        lay.addWidget(feed_btn)
+        lay.addLayout(btn_row2)
+        lay.addLayout(btn_row3)
+        return w
+
     def _refresh_spank_bank_ui(self) -> None:
         if hasattr(self, "bank_list") and hasattr(self, "bank_summary_label"):
             posts = self.spank_bank.get_all()
@@ -831,9 +919,26 @@ class MainWindow(QMainWindow):
             self.bank_pools_summary_label.setText(f"{p_cnt} saved pool{'s' if p_cnt != 1 else ''}")
             p_filter_txt = self.bank_pools_filter_edit.text() if hasattr(self, "bank_pools_filter_edit") else ""
             self._filter_bank_pools_list(p_filter_txt)
+        if hasattr(self, "bank_artists_list") and hasattr(self, "bank_artists_summary_label"):
+            a_cnt = self.spank_bank.artist_count
+            self.bank_artists_summary_label.setText(f"{a_cnt} saved artist{'s' if a_cnt != 1 else ''}")
+            self._filter_bank_artists_list(self.bank_artists_filter_edit.text())
         if hasattr(self, "bank_subtabs"):
             self.bank_subtabs.setTabText(0, f"Pools ({self.spank_bank.pool_count})")
             self.bank_subtabs.setTabText(1, f"Posts ({len(self.spank_bank)})")
+            self.bank_subtabs.setTabText(2, f"Artists ({self.spank_bank.artist_count})")
+
+    def _filter_bank_artists_list(self, text: str = "") -> None:
+        if not hasattr(self, "bank_artists_list"):
+            return
+        text = text.lower().strip().replace(" ", "_")
+        self.bank_artists_list.clear()
+        for name in self.spank_bank.get_all_artists():
+            if not text or text in name:
+                it = QListWidgetItem(name)
+                it.setData(Qt.ItemDataRole.UserRole, name)
+                it.setToolTip(f"Double-click to view all posts by {name}")
+                self.bank_artists_list.addItem(it)
 
     def _filter_bank_list(self, text: str = "") -> None:
         if not hasattr(self, "bank_list"):
@@ -908,9 +1013,9 @@ class MainWindow(QMainWindow):
                 import random
                 shuffled = list(filtered_posts)
                 random.shuffle(shuffled)
-                self._preview(shuffled[0], start_slideshow=True, shuffle=True)
+                self._preview(shuffled[0], start_slideshow=True, shuffle=True, posts=shuffled)
             else:
-                self._preview(filtered_posts[0], start_slideshow=True, shuffle=False)
+                self._preview(filtered_posts[0], start_slideshow=True, shuffle=False, posts=filtered_posts)
 
         self.api.submit(self.client.get_pool_posts, pool,
                         on_result=on_posts,
@@ -948,9 +1053,12 @@ class MainWindow(QMainWindow):
         return added
 
     def _toggle_current_pool_in_bank(self) -> None:
+        """Tab nav bank button: toggles the current pool or artist."""
         s = self._source
         if s.kind == "pool" and s.pool:
             self._toggle_pool_in_bank(s.pool)
+        elif s.kind == "artist":
+            self._toggle_artist_in_bank(s.label)
 
     def _toggle_pool_by_id_in_bank(self, pool_id: int) -> None:
         if self.spank_bank.has_pool(pool_id):
@@ -1012,9 +1120,9 @@ class MainWindow(QMainWindow):
             import random
             shuffled = list(posts)
             random.shuffle(shuffled)
-            self._preview(shuffled[0], start_slideshow=True, shuffle=True)
+            self._preview(shuffled[0], start_slideshow=True, shuffle=True, posts=shuffled)
         else:
-            self._preview(posts[0], start_slideshow=True, shuffle=False)
+            self._preview(posts[0], start_slideshow=True, shuffle=False, posts=posts)
 
     def _start_slideshow(self, shuffle: bool = False) -> None:
         posts = self.grid.all_posts()
@@ -1056,6 +1164,130 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 3000)
         self._log(msg)
         return added
+
+    # ================================================================ artists
+    @staticmethod
+    def _norm_artist(name: str) -> str:
+        return (name or "").strip().lower().replace(" ", "_")
+
+    def _open_artist(self, name: str, new_tab: bool = False) -> None:
+        """Show every post by an artist (like the artist link on e621), paginated."""
+        name = self._norm_artist(name)
+        if not name:
+            return
+        self._start_search(name, label=name, kind="artist", new_tab=new_tab)
+        self.statusBar().showMessage(f"Loading posts by {name}…")
+
+    def _source_in_bank(self, s: Source) -> bool:
+        if s.kind == "pool" and s.pool:
+            return self.spank_bank.has_pool(s.pool.id)
+        if s.kind == "artist":
+            return self.spank_bank.has_artist(s.label)
+        return False
+
+    def _toggle_artist_in_bank(self, name: str) -> bool:
+        name = self._norm_artist(name)
+        if not name:
+            return False
+        added = self.spank_bank.toggle_artist(name)
+        self._refresh_spank_bank_ui()
+        self._update_all_artist_bank_indicators()
+        msg = f"Saved artist '{name}' to Spank Bank" if added else f"Removed artist '{name}' from Spank Bank"
+        self.statusBar().showMessage(msg, 3000)
+        self._log(msg)
+        return added
+
+    def _update_all_artist_bank_indicators(self) -> None:
+        for i in range(self.results_tabs.count()):
+            tab = self.results_tabs.widget(i)
+            if isinstance(tab, ResultTab) and tab.source.kind == "artist":
+                tab.update_nav_buttons(in_bank=self._source_in_bank(tab.source))
+        if p := self.inspector._current_post:
+            self.inspector.set_artists_banked({a for a in p.artists if self.spank_bank.has_artist(a)})
+        if self._preview_dlg and self._preview_dlg.isVisible():
+            self._preview_dlg.refresh_artist_bank_state()
+
+    def _add_bank_artist_from_edit(self) -> None:
+        name = self._norm_artist(self.bank_artist_add_edit.text())
+        if not name:
+            return
+        if not self.spank_bank.has_artist(name):
+            self._toggle_artist_in_bank(name)
+        self.bank_artist_add_edit.clear()
+
+    def _selected_bank_artist(self) -> str | None:
+        it = self.bank_artists_list.currentItem()
+        return it.data(Qt.ItemDataRole.UserRole) if it else None
+
+    def _open_bank_saved_artist(self, new_tab: bool = False) -> None:
+        name = self._selected_bank_artist()
+        if not name:
+            QMessageBox.information(self, "No artist selected", "Select an artist in the saved artists list first.")
+            return
+        self._open_artist(name, new_tab=new_tab)
+
+    def _open_bank_saved_artist_web(self) -> None:
+        if name := self._selected_bank_artist():
+            QDesktopServices.openUrl(QUrl(artist_page_url(name)))
+
+    # e621 allows 40 tags per search; leave headroom for rating/order/blacklist tags.
+    MAX_FEED_ARTISTS = 25
+
+    def _open_bank_artists_feed(self, new_tab: bool = False) -> None:
+        artists = self.spank_bank.get_all_artists()
+        if not artists:
+            QMessageBox.information(self, "No saved artists",
+                                    "No artists in the Spank Bank yet.\n"
+                                    "Right-click an artist tag or use '+ Bank Artist' on any post.")
+            return
+        used = artists[:self.MAX_FEED_ARTISTS]
+        raw = used[0] if len(used) == 1 else " ".join(f"~{a}" for a in used)
+        self._start_search(raw, label="saved_artists", kind="artist_feed", new_tab=new_tab)
+        if len(artists) > len(used):
+            self.statusBar().showMessage(
+                f"e621 limits tags per search: feed shows the {len(used)} most recently saved artists", 6000)
+
+    def _play_bank_artist_slideshow(self, shuffle: bool = False) -> None:
+        name = self._selected_bank_artist()
+        if not name:
+            QMessageBox.information(self, "No artist selected", "Select an artist in the saved artists list first.")
+            return
+        self.statusBar().showMessage(f"Loading posts by {name} for slideshow…")
+
+        def on_posts(posts: list[Post]):
+            kept, _ = self.blacklist.filter(posts)
+            if not kept:
+                QMessageBox.information(self, "No posts", f"No posts available to display for {name}.")
+                return
+            order = list(kept)
+            if shuffle:
+                import random
+                random.shuffle(order)
+            self._preview(order[0], start_slideshow=True, shuffle=shuffle, posts=order)
+
+        self.api.submit(self.client.search_posts, self._compose_query(name), 1,
+                        on_result=on_posts, on_error=partial(self._on_api_error, self._gen))
+
+    def _remove_selected_bank_artists(self) -> None:
+        items = self.bank_artists_list.selectedItems()
+        if not items:
+            return
+        for it in items:
+            self.spank_bank.remove_artist(it.data(Qt.ItemDataRole.UserRole))
+        self._refresh_spank_bank_ui()
+        self._update_all_artist_bank_indicators()
+        self.statusBar().showMessage(f"Removed {len(items)} artist(s) from Spank Bank", 3000)
+
+    def _clear_bank_artists(self) -> None:
+        if self.spank_bank.artist_count == 0:
+            return
+        r = QMessageBox.question(self, "Clear Saved Artists",
+                                 f"Are you sure you want to clear all {self.spank_bank.artist_count} saved artists?")
+        if r == QMessageBox.StandardButton.Yes:
+            self.spank_bank.clear_artists()
+            self._refresh_spank_bank_ui()
+            self._update_all_artist_bank_indicators()
+            self.statusBar().showMessage("Cleared all saved artists from Spank Bank", 3000)
 
     # ============================================================== e621 interactions
     def _prompt_login_for_interaction(self, action_name: str = "Interacting with posts") -> bool:
@@ -1358,6 +1590,10 @@ class MainWindow(QMainWindow):
             title = f"Fav: {s.label.removeprefix('favorites_')[:20]}"
         elif s.kind == "spank_bank":
             title = "Spank Bank"
+        elif s.kind == "artist":
+            title = f"Artist: {s.label[:20]}"
+        elif s.kind == "artist_feed":
+            title = "Saved Artists"
         elif s.query:
             title = s.query[:20]
         else:
@@ -1401,8 +1637,7 @@ class MainWindow(QMainWindow):
                                        on_error=lambda e: None)
             tab.grid.verticalScrollBar().setValue(snap.scroll_pos)
 
-        in_bank = bool(tab.source.kind == "pool" and tab.source.pool and self.spank_bank.has_pool(tab.source.pool.id))
-        tab.update_nav_buttons(in_bank=in_bank)
+        tab.update_nav_buttons(in_bank=self._source_in_bank(tab.source))
         self._update_tab_title(tab)
         self._update_result_label()
         self._update_selection_label()
@@ -1525,13 +1760,17 @@ class MainWindow(QMainWindow):
             head = f"Favorites of <b>{s.label.removeprefix('favorites_')}</b>"
         elif s.kind == "spank_bank":
             head = f"Spank Bank · <b>{len(self.spank_bank)} saved</b>"
+        elif s.kind == "artist":
+            head = (f"Artist: <b>{html.escape(s.label)}</b> "
+                    f"(<a href='{artist_page_url(s.label)}' style='color:#e6a000;'>e621 page</a>)")
+        elif s.kind == "artist_feed":
+            head = "Latest from <b>saved artists</b>"
         else:
             head = f"Search: <b>{s.query or '(latest posts)'}</b>"
         more = "" if tab.exhausted else " (scroll for more)"
         hidden = f" · {tab.hidden} hidden by blacklist" if tab.hidden else ""
         tab.result_label.setText(f"{head} · {tab.grid.count()} shown{more}{hidden}")
-        in_bank = bool(s.kind == "pool" and s.pool and self.spank_bank.has_pool(s.pool.id))
-        tab.update_nav_buttons(in_bank=in_bank)
+        tab.update_nav_buttons(in_bank=self._source_in_bank(s))
 
     def _update_selection_label(self) -> None:
         if hasattr(self, "dl_sel_btn"):
@@ -1762,10 +2001,14 @@ class MainWindow(QMainWindow):
         img = self.grid._images.get(post.id)
         in_bank = self.spank_bank.has(post.id)
         pool_in_bank = any(self.spank_bank.has_pool(pid) for pid in post.pools) if post.pools else False
-        self.inspector.set_post(post, img, self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank)
+        artists_banked = {a for a in post.artists if self.spank_bank.has_artist(a)}
+        self.inspector.set_post(post, img, self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank,
+                                artists_banked=artists_banked)
 
-    def _preview(self, post: Post, start_slideshow: bool = False, shuffle: bool = False) -> PreviewDialog:
-        all_posts = self.grid.all_posts()
+    def _preview(self, post: Post, start_slideshow: bool = False, shuffle: bool = False,
+                 posts: list[Post] | None = None) -> PreviewDialog:
+        """Open the full-screen viewer. ``posts`` overrides the navigation list (defaults to the grid)."""
+        all_posts = list(posts) if posts else self.grid.all_posts()
         if not all_posts:
             all_posts = [post]
         idx = all_posts.index(post) if post in all_posts else 0
@@ -1773,7 +2016,8 @@ class MainWindow(QMainWindow):
         pool_in_bank = any(self.spank_bank.has_pool(pid) for pid in post.pools) if post.pools else False
         dlg = PreviewDialog(post, all_posts=all_posts, index=idx,
                             active_query=self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank,
-                            start_slideshow=start_slideshow, shuffle=shuffle, parent=self)
+                            start_slideshow=start_slideshow, shuffle=shuffle,
+                            artist_in_bank=self.spank_bank.has_artist, parent=self)
         self._preview_dlg = dlg
         dlg.add_tag.connect(self._toggle_tag_in_search)
         dlg.exclude_tag.connect(self._exclude_tag_in_search)
@@ -1786,6 +2030,9 @@ class MainWindow(QMainWindow):
         dlg.view_pool.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=False)))
         dlg.view_pool_new_tab.connect(lambda pid: (dlg.close(), self._open_pool_by_id(pid, new_tab=True)))
         dlg.download_pool.connect(lambda pid: self._download_pool_by_id(pid))
+        dlg.artist_view.connect(lambda a: (dlg.close(), self._open_artist(a, new_tab=False)))
+        dlg.artist_view_new_tab.connect(lambda a: (dlg.close(), self._open_artist(a, new_tab=True)))
+        dlg.artist_bank_toggle.connect(self._toggle_artist_in_bank)
         dlg.post_changed.connect(lambda p: (
             dlg.set_in_bank(self.spank_bank.has(p.id)),
             dlg.set_pool_in_bank(any(self.spank_bank.has_pool(pid) for pid in p.pools) if p.pools else False),
@@ -1887,10 +2134,17 @@ class MainWindow(QMainWindow):
                                    QUrl.fromLocalFile(str(Path(saved).parent))))
         menu.addSeparator()
         for a in post.artists[:3]:
-            menu.addAction(f"Add artist “{a}” to search",
-                           lambda a=a: self._toggle_tag_in_search(a))
-            menu.addAction(f"Search ONLY artist “{a}”",
-                           lambda a=a: self._search_only_tag(a))
+            menu.addAction(f"View artist “{a}”", lambda a=a: self._open_artist(a, new_tab=False))
+            sub = menu.addMenu(f"More for artist “{a}”")
+            sub.addAction("Open artist in new tab", lambda a=a: self._open_artist(a, new_tab=True))
+            sub.addAction("Remove artist from Spank Bank" if self.spank_bank.has_artist(a)
+                          else "Save artist to Spank Bank",
+                          lambda a=a: self._toggle_artist_in_bank(a))
+            sub.addAction("Open artist page on e621",
+                          lambda a=a: QDesktopServices.openUrl(QUrl(artist_page_url(a))))
+            sub.addSeparator()
+            sub.addAction(f"Add “{a}” to search", lambda a=a: self._toggle_tag_in_search(a))
+            sub.addAction(f"Search ONLY “{a}”", lambda a=a: self._search_only_tag(a))
         for pid in post.pools[:3]:
             menu.addAction(f"Open pool #{pid}", lambda pid=pid: self._open_pool_by_id(pid, new_tab=False))
             menu.addAction(f"Open pool #{pid} in new tab", lambda pid=pid: self._open_pool_by_id(pid, new_tab=True))

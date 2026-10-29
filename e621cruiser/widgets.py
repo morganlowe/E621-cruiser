@@ -1,7 +1,9 @@
 """Reusable Qt widgets."""
 from __future__ import annotations
 
+import html
 import re
+from urllib.parse import quote, unquote
 
 from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, QPainter,
@@ -12,7 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
                                QVBoxLayout, QWidget)
 
-from .api import TAG_CATEGORIES, Post, Tag
+from .api import BASE_URL, NON_ARTIST_TAGS, TAG_CATEGORIES, Post, Tag
 from .settings import Settings
 
 CATEGORY_COLORS = {
@@ -21,6 +23,113 @@ CATEGORY_COLORS = {
 }
 RATING_COLORS = {"s": "#3a9e3a", "q": "#d9a400", "e": "#d23b3b"}
 TILE = 150
+ARTIST_LINK_SCHEME = "artist:"
+
+
+def artist_page_url(name: str) -> str:
+    """e621 artist wiki page (works for both registered and unregistered artists)."""
+    return f"{BASE_URL}/artists/show_or_new?name={quote(name)}"
+
+
+def artist_links_html(artists: list[str], color: str = "#e6a000") -> str:
+    """Render artist names as clickable ``artist:<name>`` rich-text links."""
+    if not artists:
+        return "unknown"
+    return ", ".join(
+        f"<a href='{ARTIST_LINK_SCHEME}{quote(a)}' style='color:{color}; text-decoration:none;'>"
+        f"{html.escape(a)}</a>"
+        for a in artists)
+
+
+def artist_from_link(link: str) -> str | None:
+    if link.startswith(ARTIST_LINK_SCHEME):
+        return unquote(link[len(ARTIST_LINK_SCHEME):]) or None
+    return None
+
+
+class ArtistActionsRow(QWidget):
+    """Row of artist buttons (View / + Tab / Bank). Pops a menu when a post has several artists."""
+    view_requested = Signal(str)
+    view_new_tab_requested = Signal(str)
+    bank_toggle_requested = Signal(str)
+
+    def __init__(self, padding: str = "4px", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._artists: list[str] = []
+        self._banked: set[str] = set()
+        self._padding = padding
+
+        self.btn_view = QPushButton("View Artist")
+        self.btn_view.setToolTip("Show all posts by this artist")
+        self.btn_view.setStyleSheet(f"color: #e6a000; font-weight: bold; padding: {padding};")
+        self.btn_view.clicked.connect(lambda: self._pick(self.view_requested, "View posts by “{}”"))
+
+        self.btn_tab = QPushButton("+ Tab")
+        self.btn_tab.setToolTip("Open this artist's posts in a new tab")
+        self.btn_tab.setStyleSheet(f"color: #e6a000; font-weight: bold; padding: {padding};")
+        self.btn_tab.clicked.connect(lambda: self._pick(self.view_new_tab_requested, "Open “{}” in new tab"))
+
+        self.btn_bank = QPushButton("+ Bank Artist")
+        self.btn_bank.clicked.connect(self._on_bank_clicked)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.btn_view, 1)
+        lay.addWidget(self.btn_tab)
+        lay.addWidget(self.btn_bank)
+        self.setVisible(False)
+
+    def set_artists(self, artists: list[str], banked: set[str] | None = None) -> None:
+        self._artists = list(artists)
+        self._banked = set(banked or ())
+        self.setVisible(bool(self._artists))
+        if len(self._artists) == 1:
+            self.btn_view.setText("View Artist")
+            self.btn_view.setToolTip(f"Show all posts by “{self._artists[0]}”")
+        else:
+            self.btn_view.setText("View Artist…")
+            self.btn_view.setToolTip("Show all posts by one of this post's artists")
+        self._update_bank_button()
+
+    def set_banked(self, banked: set[str]) -> None:
+        self._banked = set(banked)
+        self._update_bank_button()
+
+    def _update_bank_button(self) -> None:
+        many = len(self._artists) > 1
+        any_in = any(a in self._banked for a in self._artists)
+        if any_in:
+            self.btn_bank.setText("Artist In Bank…" if many else "Artist In Bank")
+            self.btn_bank.setStyleSheet(f"color: #ffffff; background-color: #d97706; font-weight: bold; "
+                                        f"padding: {self._padding}; border-radius: 4px;")
+            self.btn_bank.setToolTip("Artist is saved in Spank Bank (click to remove)")
+        else:
+            self.btn_bank.setText("+ Bank Artist…" if many else "+ Bank Artist")
+            self.btn_bank.setStyleSheet(f"color: #fbbf24; font-weight: bold; padding: {self._padding};")
+            self.btn_bank.setToolTip("Save artist to Spank Bank")
+
+    def _pick(self, signal, label: str) -> None:
+        if not self._artists:
+            return
+        if len(self._artists) == 1:
+            signal.emit(self._artists[0])
+            return
+        menu = QMenu(self)
+        for a in self._artists:
+            menu.addAction(label.format(a), lambda a=a: signal.emit(a))
+        menu.exec(QCursor.pos())
+
+    def _on_bank_clicked(self) -> None:
+        if not self._artists:
+            return
+        if len(self._artists) == 1:
+            self.bank_toggle_requested.emit(self._artists[0])
+            return
+        menu = QMenu(self)
+        for a in self._artists:
+            text = f"Remove “{a}” from Spank Bank" if a in self._banked else f"Save “{a}” to Spank Bank"
+            menu.addAction(text, lambda a=a: self.bank_toggle_requested.emit(a))
+        menu.exec(QCursor.pos())
 
 
 # -------------------------------------------------------- collapsible sections
@@ -606,6 +715,9 @@ class TagListWidget(QListWidget):
     tag_clicked = Signal(str)           # emitted on single click (toggle/add)
     tag_exclude_requested = Signal(str) # right-click -> exclude (-tag)
     tag_search_requested = Signal(str)  # right-click -> search only this tag
+    artist_view_requested = Signal(str)          # right-click on artist -> view artist's posts
+    artist_view_new_tab_requested = Signal(str)  # right-click on artist -> view in new tab
+    artist_bank_toggle_requested = Signal(str)   # right-click on artist -> save/remove in Spank Bank
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -614,6 +726,7 @@ class TagListWidget(QListWidget):
         self.itemClicked.connect(self._on_item_clicked)
         self._raw_tags: dict[str, list[str]] = {}
         self._active_search_tokens: set[str] = set()
+        self.artist_in_bank = lambda _name: False  # injected by owner for menu labels
 
     def set_post_tags(self, tags: dict[str, list[str]], active_query: str = "") -> None:
         self.clear()
@@ -678,6 +791,16 @@ class TagListWidget(QListWidget):
         is_inc = tag in self._active_search_tokens
         is_exc = f"-{tag}" in self._active_search_tokens
 
+        if it.data(Qt.ItemDataRole.UserRole + 1) == "artist" and tag not in NON_ARTIST_TAGS:
+            menu.addAction(f"View artist “{tag}”", lambda: self.artist_view_requested.emit(tag))
+            menu.addAction("Open artist in new tab", lambda: self.artist_view_new_tab_requested.emit(tag))
+            in_bank = self.artist_in_bank(tag)
+            menu.addAction("Remove artist from Spank Bank" if in_bank else "Save artist to Spank Bank",
+                           lambda: self.artist_bank_toggle_requested.emit(tag))
+            menu.addAction("Open artist page on e621",
+                           lambda: QDesktopServices.openUrl(QUrl(artist_page_url(tag))))
+            menu.addSeparator()
+
         if is_inc:
             menu.addAction(f"Remove “{tag}” from search", lambda: self.tag_clicked.emit(tag))
         else:
@@ -708,6 +831,9 @@ class PostInspector(QWidget):
     view_pool_new_tab_requested = Signal(int)
     bank_pool_requested = Signal(int)
     download_pool_requested = Signal(int)
+    artist_view_requested = Signal(str)
+    artist_view_new_tab_requested = Signal(str)
+    artist_bank_toggle_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -715,6 +841,10 @@ class PostInspector(QWidget):
 
         self.title_label = QLabel("<b>No post selected</b>")
         self.title_label.setWordWrap(True)
+        self.title_label.setTextFormat(Qt.TextFormat.RichText)
+        self.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        self.title_label.linkActivated.connect(self._on_title_link)
+        self.title_label.setToolTip("Click an artist name to view all of their posts")
 
         self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -789,6 +919,12 @@ class PostInspector(QWidget):
         self.pool_widget.setLayout(pool_row)
         self.pool_widget.setVisible(False)
 
+        # Artist actions
+        self.artist_row = ArtistActionsRow()
+        self.artist_row.view_requested.connect(self.artist_view_requested)
+        self.artist_row.view_new_tab_requested.connect(self.artist_view_new_tab_requested)
+        self.artist_row.bank_toggle_requested.connect(self.artist_bank_toggle_requested)
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
         self.filter_edit.setClearButtonEnabled(True)
@@ -801,6 +937,9 @@ class PostInspector(QWidget):
         self.tag_list.tag_clicked.connect(self.tag_clicked)
         self.tag_list.tag_exclude_requested.connect(self.tag_exclude_requested)
         self.tag_list.tag_search_requested.connect(self.tag_search_requested)
+        self.tag_list.artist_view_requested.connect(self.artist_view_requested)
+        self.tag_list.artist_view_new_tab_requested.connect(self.artist_view_new_tab_requested)
+        self.tag_list.artist_bank_toggle_requested.connect(self.artist_bank_toggle_requested)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -809,10 +948,18 @@ class PostInspector(QWidget):
         layout.addWidget(self.info_label)
         layout.addLayout(btn_row)
         layout.addLayout(interact_row)
+        layout.addWidget(self.artist_row)
         layout.addWidget(self.pool_widget)
         layout.addWidget(self.tag_header)
         layout.addWidget(self.filter_edit)
         layout.addWidget(self.tag_list, 1)
+
+    def _on_title_link(self, link: str) -> None:
+        if name := artist_from_link(link):
+            self.artist_view_requested.emit(name)
+
+    def set_artists_banked(self, banked: set[str]) -> None:
+        self.artist_row.set_banked(banked)
 
     def _emit_preview(self) -> None:
         if self._current_post:
@@ -937,7 +1084,8 @@ class PostInspector(QWidget):
         self.tag_list.filter_text(text)
 
     def set_post(self, post: Post | None, thumb_image: QImage | None = None,
-                 active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False) -> None:
+                 active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False,
+                 artists_banked: set[str] | None = None) -> None:
         self._current_post = post
         self.filter_edit.clear()
         if post is None:
@@ -952,11 +1100,12 @@ class PostInspector(QWidget):
             self.set_pool_in_bank(False)
             self.update_interactions(None)
             self.pool_widget.setVisible(False)
+            self.artist_row.set_artists([])
             self.tag_list.clear()
             return
 
-        artists = ", ".join(post.artists) or "unknown"
-        self.title_label.setText(f"<b>Post #{post.id}</b> · {artists}")
+        self.title_label.setText(f"<b>Post #{post.id}</b> · {artist_links_html(post.artists)}")
+        self.artist_row.set_artists(post.artists, artists_banked)
         self.btn_preview.setEnabled(True)
         self.btn_bank.setEnabled(True)
         self.btn_download.setEnabled(True)
@@ -1019,11 +1168,14 @@ class PreviewDialog(QDialog):
     view_pool_new_tab = Signal(int)
     bank_pool_toggle = Signal(int)
     download_pool = Signal(int)
+    artist_view = Signal(str)
+    artist_view_new_tab = Signal(str)
+    artist_bank_toggle = Signal(str)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
                  active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False,
                  start_slideshow: bool = False, shuffle: bool = False,
-                 parent: QWidget | None = None):
+                 artist_in_bank=None, parent: QWidget | None = None):
         super().__init__(parent)
         self._posts = all_posts if all_posts else [post]
         self._index = max(0, min(len(self._posts) - 1, index))
@@ -1031,6 +1183,7 @@ class PreviewDialog(QDialog):
         self._active_query = active_query
         self._in_bank = in_bank
         self._pool_in_bank = pool_in_bank
+        self._artist_in_bank = artist_in_bank or (lambda _name: False)
         self._image: QImage | None = None
 
         self._slideshow_timer = QTimer(self)
@@ -1177,6 +1330,9 @@ class PreviewDialog(QDialog):
         self.info_label = QLabel()
         self.info_label.setWordWrap(True)
         self.info_label.setStyleSheet("font-size: 12px; color: #cbd5e1; padding: 4px 0;")
+        self.info_label.setTextFormat(Qt.TextFormat.RichText)
+        self.info_label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+        self.info_label.linkActivated.connect(self._on_info_link)
 
         self.side_fav_btn = QPushButton("Favorite (e621)")
         self.side_fav_btn.setStyleSheet("font-weight: bold; padding: 5px;")
@@ -1222,14 +1378,23 @@ class PreviewDialog(QDialog):
         self.side_bank_btn.setStyleSheet("font-weight: bold; padding: 5px;")
         self.side_bank_btn.clicked.connect(self._on_bank_clicked)
 
+        self.side_artist_row = ArtistActionsRow(padding="5px")
+        self.side_artist_row.view_requested.connect(self.artist_view)
+        self.side_artist_row.view_new_tab_requested.connect(self.artist_view_new_tab)
+        self.side_artist_row.bank_toggle_requested.connect(self.artist_bank_toggle)
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tags…")
         self.filter_edit.setClearButtonEnabled(True)
 
         self.tag_list = TagListWidget()
+        self.tag_list.artist_in_bank = lambda name: self._artist_in_bank(name)
         self.tag_list.tag_clicked.connect(self._on_tag_clicked)
         self.tag_list.tag_exclude_requested.connect(self.exclude_tag)
         self.tag_list.tag_search_requested.connect(self.search_tag)
+        self.tag_list.artist_view_requested.connect(self.artist_view)
+        self.tag_list.artist_view_new_tab_requested.connect(self.artist_view_new_tab)
+        self.tag_list.artist_bank_toggle_requested.connect(self.artist_bank_toggle)
         self.filter_edit.textChanged.connect(self.tag_list.filter_text)
 
         add_btn = QPushButton("+ Add selected tag")
@@ -1240,6 +1405,7 @@ class PreviewDialog(QDialog):
         rl.addWidget(self.info_label)
         rl.addLayout(side_interact_row)
         rl.addWidget(self.side_bank_btn)
+        rl.addWidget(self.side_artist_row)
         rl.addWidget(self.side_pool_widget)
         rl.addWidget(QLabel("Tags (click to add/remove from search):"))
         rl.addWidget(self.filter_edit)
@@ -1458,7 +1624,6 @@ class PreviewDialog(QDialog):
         self.prev_btn.setEnabled(self._index > 0)
         self.next_btn.setEnabled(self._index < len(self._posts) - 1)
 
-        artists = ", ".join(post.artists) or "unknown"
         mb = post.size / 1_048_576 if post.size else 0
         details = [f"<b>#{post.id}</b>", post.ext.upper(), f"{post.width}×{post.height}"]
         if mb > 0:
@@ -1469,7 +1634,8 @@ class PreviewDialog(QDialog):
             details.append(f"Rating {post.rating.upper()}")
 
         pool_txt = f"<br>Pools: {', '.join(map(str, post.pools))}" if post.pools else ""
-        self.info_label.setText(f"{' · '.join(details)}<br>Artist: <b>{artists}</b>{pool_txt}")
+        self.info_label.setText(f"{' · '.join(details)}<br>Artist: <b>{artist_links_html(post.artists)}</b>{pool_txt}")
+        self.refresh_artist_bank_state()
 
         has_pools = bool(post.pools)
         self.pool_view_btn.setVisible(has_pools)
@@ -1547,6 +1713,14 @@ class PreviewDialog(QDialog):
             for pid in self.post.pools:
                 menu.addAction(f"Save/Remove Pool #{pid} in Spank Bank", lambda pid=pid: self.bank_pool_toggle.emit(pid))
             menu.exec(QCursor.pos())
+
+    def _on_info_link(self, link: str) -> None:
+        if name := artist_from_link(link):
+            self.artist_view.emit(name)
+
+    def refresh_artist_bank_state(self) -> None:
+        artists = self.post.artists
+        self.side_artist_row.set_artists(artists, {a for a in artists if self._artist_in_bank(a)})
 
     def _on_tag_clicked(self, tag: str) -> None:
         self.add_tag.emit(tag)

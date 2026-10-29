@@ -689,6 +689,123 @@ class WidgetQueryTests(unittest.TestCase):
 
         w.close()
 
+    def test_spank_bank_artists_storage(self):
+        import tempfile
+        from e621cruiser.storage import SpankBank
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bank_db = Path(tmpdir) / "spank_bank.db"
+            bank = SpankBank(bank_db)
+
+            self.assertEqual(bank.artist_count, 0)
+            self.assertFalse(bank.has_artist("SomeArtist"))
+
+            # Add artist (normalizes case & spaces)
+            self.assertTrue(bank.toggle_artist("  Some Artist  "))
+            self.assertTrue(bank.has_artist("some_artist"))
+            self.assertTrue(bank.has_artist("SOME ARTIST"))
+            self.assertEqual(bank.artist_count, 1)
+
+            bank.add_artist("another_artist")
+            self.assertEqual(bank.artist_count, 2)
+            self.assertEqual(bank.get_all_artists(), ["another_artist", "some_artist"])
+
+            # Persistence across reopen
+            bank2 = SpankBank(bank_db)
+            self.assertEqual(bank2.artist_count, 2)
+            self.assertTrue(bank2.has_artist("some_artist"))
+
+            # Toggle remove
+            self.assertFalse(bank2.toggle_artist("some_artist"))
+            self.assertFalse(bank2.has_artist("some_artist"))
+            self.assertEqual(bank2.artist_count, 1)
+
+            bank2.clear_artists()
+            self.assertEqual(bank2.artist_count, 0)
+
+    def test_artist_links_and_spank_bank_ui(self):
+        import tempfile
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        from e621cruiser.widgets import PostInspector, PreviewDialog, artist_from_link, artist_links_html
+
+        # Test link encoding/decoding with special characters
+        html_str = artist_links_html(["cool_fox", "artist_(2)"])
+        self.assertIn("artist:cool_fox", html_str)
+        self.assertEqual(artist_from_link("artist:artist_%282%29"), "artist_(2)")
+
+        post = make_post(id=555, tags={"artist": ["conditional_dnp", "fox_painter"],
+                                       "general": ["solo"], "species": ["fox"],
+                                       "copyright": [], "character": []})
+
+        # Inspector clickable artist link & buttons
+        insp = PostInspector()
+        insp.set_post(post, artists_banked=set())
+        self.assertFalse(insp.artist_row.isHidden())
+        self.assertEqual(insp.artist_row.btn_bank.text(), "+ Bank Artist")
+
+        viewed = []
+        banked = []
+        insp.artist_view_requested.connect(viewed.append)
+        insp.artist_bank_toggle_requested.connect(banked.append)
+
+        # Simulate clicking the rich-text artist link in the title
+        insp._on_title_link("artist:fox_painter")
+        self.assertEqual(viewed, ["fox_painter"])
+
+        # Simulate clicking the + Bank Artist button
+        insp.artist_row.btn_bank.click()
+        self.assertEqual(banked, ["fox_painter"])
+
+        insp.set_artists_banked({"fox_painter"})
+        self.assertEqual(insp.artist_row.btn_bank.text(), "Artist In Bank")
+        insp.deleteLater()
+
+        # PreviewDialog clickable artist link & buttons
+        dlg = PreviewDialog(post, all_posts=[post], artist_in_bank=lambda a: a == "fox_painter")
+        self.assertEqual(dlg.side_artist_row.btn_bank.text(), "Artist In Bank")
+        dlg_viewed = []
+        dlg.artist_view.connect(dlg_viewed.append)
+        dlg._on_info_link("artist:fox_painter")
+        self.assertEqual(dlg_viewed, ["fox_painter"])
+        dlg.close()
+        dlg.deleteLater()
+
+        # MainWindow end-to-end artist browsing and Spank Bank Artists sub-tab
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            s = Settings.load(tmp_path / "settings.json")
+            w = MainWindow(s, data_dir=tmp_path)
+            w.api.submit = lambda *args, **kwargs: None
+
+            # Open artist view
+            w._open_artist("Fox Painter", new_tab=False)
+            self.assertEqual(w.current_tab.source.kind, "artist")
+            self.assertEqual(w.current_tab.source.label, "fox_painter")
+            self.assertFalse(w.current_tab.btn_bank_pool.isHidden())
+            self.assertEqual(w.current_tab.btn_bank_pool.text(), "+ Bank Artist")
+
+            # Toggle artist into Spank Bank via current tab's nav button
+            w._toggle_current_pool_in_bank()
+            self.assertTrue(w.spank_bank.has_artist("fox_painter"))
+            self.assertEqual(w.current_tab.btn_bank_pool.text(), "Artist In Bank")
+            self.assertEqual(w.bank_subtabs.tabText(2), "Artists (1)")
+            self.assertEqual(w.bank_artists_list.count(), 1)
+
+            # Add second artist via quick-add input in Spank Bank > Artists tab
+            w.bank_artist_add_edit.setText("wolf_sketcher")
+            w._add_bank_artist_from_edit()
+            self.assertEqual(w.spank_bank.artist_count, 2)
+            self.assertEqual(w.bank_subtabs.tabText(2), "Artists (2)")
+
+            # Combined feed of all saved artists uses ~artist OR query
+            w._open_bank_artists_feed(new_tab=False)
+            self.assertEqual(w.current_tab.source.kind, "artist_feed")
+            self.assertIn("~wolf_sketcher", w.current_tab.source.query)
+            self.assertIn("~fox_painter", w.current_tab.source.query)
+
+            w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

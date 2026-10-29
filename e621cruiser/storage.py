@@ -173,15 +173,71 @@ class SpankBank:
             "data_json TEXT, "
             "added_at REAL)"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS spank_bank_artists ("
+            "name TEXT PRIMARY KEY, "
+            "added_at REAL)"
+        )
         self._conn.commit()
         self._ids = {r[0] for r in self._conn.execute("SELECT post_id FROM spank_bank")}
         self._pool_ids = {r[0] for r in self._conn.execute("SELECT pool_id FROM spank_bank_pools")}
+        self._artists = {r[0] for r in self._conn.execute("SELECT name FROM spank_bank_artists")}
 
     def has(self, post_id: int) -> bool:
         return post_id in self._ids
 
     def has_pool(self, pool_id: int) -> bool:
         return pool_id in self._pool_ids
+
+    # ------------------------------------------------------------ artists
+    @staticmethod
+    def _norm_artist(name: str) -> str:
+        return name.strip().lower().replace(" ", "_")
+
+    def has_artist(self, name: str) -> bool:
+        return self._norm_artist(name) in self._artists
+
+    def add_artist(self, name: str) -> None:
+        name = self._norm_artist(name)
+        if not name:
+            return
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO spank_bank_artists VALUES (?, ?)",
+                (name, time.time()),
+            )
+            self._conn.commit()
+            self._artists.add(name)
+
+    def remove_artist(self, name: str) -> None:
+        name = self._norm_artist(name)
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank_artists WHERE name = ?", (name,))
+            self._conn.commit()
+            self._artists.discard(name)
+
+    def toggle_artist(self, name: str) -> bool:
+        if self.has_artist(name):
+            self.remove_artist(name)
+            return False
+        self.add_artist(name)
+        return True
+
+    def get_all_artists(self) -> list[str]:
+        """Saved artist names, most recently added first."""
+        with self._lock:
+            cursor = self._conn.execute("SELECT name FROM spank_bank_artists ORDER BY added_at DESC")
+            return [r[0] for r in cursor]
+
+    def clear_artists(self) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM spank_bank_artists")
+            self._conn.commit()
+            self._artists.clear()
+
+    @property
+    def artist_count(self) -> int:
+        return len(self._artists)
 
     def add(self, post: Post) -> None:
         with self._lock:
