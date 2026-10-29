@@ -5,7 +5,7 @@ import html
 import re
 from urllib.parse import quote, unquote
 
-from PySide6.QtCore import QRect, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPixmap, QStandardItem, QStandardItemModel)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
@@ -1198,10 +1198,17 @@ class PreviewDialog(QDialog):
         self.image_label = QLabel("Loading image…")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(400, 400)
+        self.image_label.setMouseTracking(True)
+        self.image_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.image_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.image_label.customContextMenuRequested.connect(self._show_image_context_menu)
         self.image_label.setStyleSheet("background-color: #0b0d12; border: 1px solid #222630; border-radius: 4px;")
+        self.image_label.installEventFilter(self)
 
         # Top bar
-        top_bar = QHBoxLayout()
+        self.top_bar_widget = QWidget()
+        top_bar = QHBoxLayout(self.top_bar_widget)
+        top_bar.setContentsMargins(0, 0, 0, 0)
         self.prev_btn = QPushButton("Previous (Left)")
         self.prev_btn.clicked.connect(self.prev_post)
         self.next_btn = QPushButton("Next (Right)")
@@ -1250,7 +1257,9 @@ class PreviewDialog(QDialog):
         top_bar.addWidget(self.close_btn)
 
         # Play / pool sub-bar
-        play_bar = QHBoxLayout()
+        self.play_bar_widget = QWidget()
+        play_bar = QHBoxLayout(self.play_bar_widget)
+        play_bar.setContentsMargins(0, 0, 0, 0)
         self.btn_slideshow = QPushButton("Play Slideshow (Space)")
         self.btn_slideshow.setCheckable(True)
         self.btn_slideshow.setStyleSheet("""
@@ -1421,17 +1430,29 @@ class PreviewDialog(QDialog):
         self.split.setStretchFactor(0, 4)
         self.split.setStretchFactor(1, 1)
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 10, 10, 10)
-        lay.addLayout(top_bar)
-        lay.addLayout(play_bar)
-        lay.addWidget(self.split, 1)
+        self._true_fullscreen = False
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(10, 10, 10, 10)
+        self._main_layout.addWidget(self.top_bar_widget)
+        self._main_layout.addWidget(self.play_bar_widget)
+        self._main_layout.addWidget(self.split, 1)
+
+        # Prevent buttons/lists from stealing Left/Right arrow keys for focus highlight movement
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        for child in self.findChildren(QWidget):
+            if isinstance(child, (QLineEdit, QSpinBox)):
+                child.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+            elif child is not self.image_label:
+                child.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            child.installEventFilter(self)
+        self.installEventFilter(self)
 
         self.set_in_bank(in_bank)
         self.set_pool_in_bank(pool_in_bank)
         if shuffle:
             self.combo_slideshow_order.setCurrentText("Shuffle")
         self._update_display()
+        self.image_label.setFocus()
         if start_slideshow:
             QTimer.singleShot(100, self.start_slideshow)
 
@@ -1581,13 +1602,40 @@ class PreviewDialog(QDialog):
         super().closeEvent(e)
 
     def _toggle_tags_panel(self, checked: bool) -> None:
+        if self._true_fullscreen and checked:
+            self._set_true_fullscreen(False)
         self.right_panel.setVisible(checked)
+        QTimer.singleShot(0, self._rescale)
+
+    def enter_fullscreen(self) -> None:
+        """Enter true chromeless fullscreen mode (image fills the entire screen)."""
+        self._set_true_fullscreen(True)
+
+    def _set_true_fullscreen(self, fullscreen: bool) -> None:
+        self._true_fullscreen = fullscreen
+        if fullscreen:
+            self.top_bar_widget.setVisible(False)
+            self.play_bar_widget.setVisible(False)
+            self.right_panel.setVisible(False)
+            self._main_layout.setContentsMargins(0, 0, 0, 0)
+            self._main_layout.setSpacing(0)
+            self.image_label.setStyleSheet("background-color: #000000; border: none; border-radius: 0px;")
+            self.fs_btn.setText("Controls (F11)")
+            self.showFullScreen()
+        else:
+            self.top_bar_widget.setVisible(True)
+            self.play_bar_widget.setVisible(True)
+            self.right_panel.setVisible(self.tags_toggle_btn.isChecked())
+            self._main_layout.setContentsMargins(10, 10, 10, 10)
+            self._main_layout.setSpacing(6)
+            self.image_label.setStyleSheet("background-color: #0b0d12; border: 1px solid #222630; border-radius: 4px;")
+            self.fs_btn.setText("Fullscreen (F11)")
+            self.showMaximized()
+        self.image_label.setFocus()
+        QTimer.singleShot(0, self._rescale)
 
     def _toggle_fullscreen(self) -> None:
-        if self.isFullScreen():
-            self.showMaximized()
-        else:
-            self.showFullScreen()
+        self._set_true_fullscreen(not self._true_fullscreen)
 
     def prev_post(self) -> None:
         if self._index > 0:
@@ -1758,37 +1806,136 @@ class PreviewDialog(QDialog):
             tag = it.data(Qt.ItemDataRole.UserRole) or it.text().removeprefix("[+] ").removeprefix("[-] ")
             self.search_tag.emit(tag)
 
-    def keyPressEvent(self, e):  # noqa: N802
-        if e.key() in (Qt.Key.Key_Left, Qt.Key.Key_A):
+    def focusNextPrevChild(self, _next: bool) -> bool:  # noqa: N802
+        # Never allow arrow keys or Tab inside PreviewDialog to move focus highlight across buttons
+        return False
+
+    @staticmethod
+    def _edge_zone_width(total_width: int) -> int:
+        return max(120, int(total_width * 0.25))
+
+    def click_edge_at(self, x: int, total_width: int | None = None) -> bool:
+        """Navigate to previous/next post if ``x`` falls in the left or right screen edge zone."""
+        w = total_width if total_width is not None else max(1, self.image_label.width())
+        edge = self._edge_zone_width(w)
+        if x <= edge:
             self.prev_post()
-            return
-        if e.key() in (Qt.Key.Key_Right, Qt.Key.Key_D):
+            return True
+        if x >= w - edge:
             self.next_post()
-            return
-        if e.key() == Qt.Key.Key_Space:
+            return True
+        return False
+
+    def _show_image_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        menu.addAction("Previous (Left)", self.prev_post)
+        menu.addAction("Next (Right)", self.next_post)
+        menu.addSeparator()
+        slide_txt = "Pause Slideshow (Space)" if self._slideshow_timer.isActive() else "Play Slideshow (Space)"
+        menu.addAction(slide_txt, self.toggle_slideshow)
+        bank_txt = "Remove from Spank Bank (B)" if self._in_bank else "+ Save to Spank Bank (B)"
+        menu.addAction(bank_txt, self._on_bank_clicked)
+        fav_txt = "Remove Favorite (L)" if self.post.is_favorited else "Favorite on e621 (L)"
+        menu.addAction(fav_txt, self._on_favorite_clicked)
+        vote_txt = "Remove Upvote (U)" if self.post.own_vote == 1 else "Upvote +1 on e621 (U)"
+        menu.addAction(vote_txt, self._on_upvote_clicked)
+        menu.addAction("Download Post", lambda: self.download.emit(self.post))
+        menu.addSeparator()
+        ui_txt = "Show Controls & Tags (F11 / T)" if self._true_fullscreen else "True Fullscreen (F11)"
+        menu.addAction(ui_txt, self._toggle_fullscreen)
+        menu.addAction("Close (Esc)", self.close)
+        menu.exec(self.image_label.mapToGlobal(pos))
+
+    def eventFilter(self, obj, e):  # noqa: N802
+        etype = e.type()
+        if obj is self.image_label:
+            if etype == QEvent.Type.MouseButtonPress and e.button() == Qt.MouseButton.LeftButton:
+                pos = e.position().toPoint() if hasattr(e, "position") else e.pos()
+                if self.click_edge_at(pos.x(), self.image_label.width()):
+                    e.accept()
+                    return True
+            elif etype == QEvent.Type.MouseMove:
+                pos = e.position().toPoint() if hasattr(e, "position") else e.pos()
+                w = max(1, self.image_label.width())
+                edge = self._edge_zone_width(w)
+                if pos.x() <= edge or pos.x() >= w - edge:
+                    self.image_label.setCursor(Qt.CursorShape.PointingHandCursor)
+                else:
+                    self.image_label.setCursor(Qt.CursorShape.ArrowCursor)
+
+        if etype in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress):
+            # Let the tag filter input handle text keys when actively focused, except Escape/F11/Left/Right when empty
+            if self.filter_edit.hasFocus() and e.key() not in (Qt.Key.Key_Escape, Qt.Key.Key_F11):
+                if not (e.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right) and not self.filter_edit.text()):
+                    return super().eventFilter(obj, e)
+            if self._is_handled_key(e.key()):
+                if etype == QEvent.Type.KeyPress:
+                    self._handle_key(e.key())
+                e.accept()
+                return True
+        return super().eventFilter(obj, e)
+
+    def mousePressEvent(self, e):  # noqa: N802
+        if e.button() == Qt.MouseButton.LeftButton:
+            pos = e.position().toPoint() if hasattr(e, "position") else e.pos()
+            if self.click_edge_at(pos.x(), self.width()):
+                e.accept()
+                return
+        super().mousePressEvent(e)
+
+    @staticmethod
+    def _is_handled_key(key: int) -> bool:
+        return key in (
+            Qt.Key.Key_Left, Qt.Key.Key_A,
+            Qt.Key.Key_Right, Qt.Key.Key_D,
+            Qt.Key.Key_Space, Qt.Key.Key_B,
+            Qt.Key.Key_L, Qt.Key.Key_U,
+            Qt.Key.Key_S, Qt.Key.Key_F11,
+            Qt.Key.Key_F, Qt.Key.Key_Escape,
+            Qt.Key.Key_Q, Qt.Key.Key_T,
+        )
+
+    def _handle_key(self, key: int) -> bool:
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_A):
+            self.prev_post()
+            return True
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_D):
+            self.next_post()
+            return True
+        if key == Qt.Key.Key_Space:
             self.toggle_slideshow()
-            return
-        if e.key() == Qt.Key.Key_B:
+            return True
+        if key == Qt.Key.Key_B:
             self._on_bank_clicked()
-            return
-        if e.key() == Qt.Key.Key_L:
+            return True
+        if key == Qt.Key.Key_L:
             self._on_favorite_clicked()
-            return
-        if e.key() == Qt.Key.Key_U:
+            return True
+        if key == Qt.Key.Key_U:
             self._on_upvote_clicked()
-            return
-        if e.key() == Qt.Key.Key_S:
+            return True
+        if key == Qt.Key.Key_S:
             self.toggle_slideshow()
-            return
-        if e.key() in (Qt.Key.Key_F11, Qt.Key.Key_F):
+            return True
+        if key in (Qt.Key.Key_F11, Qt.Key.Key_F):
             self._toggle_fullscreen()
-            return
-        if e.key() == Qt.Key.Key_Escape or e.key() == Qt.Key.Key_Q:
+            return True
+        if key in (Qt.Key.Key_Escape, Qt.Key.Key_Q):
             self.close()
-            return
-        if e.key() == Qt.Key.Key_T:
-            self.tags_toggle_btn.setChecked(not self.tags_toggle_btn.isChecked())
-            self._toggle_tags_panel(self.tags_toggle_btn.isChecked())
+            return True
+        if key == Qt.Key.Key_T:
+            if self._true_fullscreen:
+                self.tags_toggle_btn.setChecked(True)
+                self._set_true_fullscreen(False)
+            else:
+                self.tags_toggle_btn.setChecked(not self.tags_toggle_btn.isChecked())
+                self._toggle_tags_panel(self.tags_toggle_btn.isChecked())
+            return True
+        return False
+
+    def keyPressEvent(self, e):  # noqa: N802
+        if self._handle_key(e.key()):
+            e.accept()
             return
         super().keyPressEvent(e)
 

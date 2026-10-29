@@ -806,6 +806,119 @@ class WidgetQueryTests(unittest.TestCase):
 
             w.close()
 
+    def test_true_fullscreen_edge_clicks_and_spank_bank_downloads(self):
+        import tempfile
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QKeyEvent, QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+        from e621cruiser.widgets import PreviewDialog
+
+        p1 = make_post(id=801)
+        p2 = make_post(id=802)
+        p3 = make_post(id=803)
+        dlg = PreviewDialog(p1, all_posts=[p1, p2, p3], index=0)
+
+        # True fullscreen hides chrome and strips margins
+        dlg.enter_fullscreen()
+        self.assertTrue(dlg._true_fullscreen)
+        self.assertTrue(dlg.top_bar_widget.isHidden())
+        self.assertTrue(dlg.play_bar_widget.isHidden())
+        self.assertTrue(dlg.right_panel.isHidden())
+        self.assertEqual(dlg._main_layout.contentsMargins().left(), 0)
+
+        # focusNextPrevChild is disabled so arrow keys never move button highlight
+        self.assertFalse(dlg.focusNextPrevChild(True))
+        self.assertFalse(dlg.focusNextPrevChild(False))
+
+        # Sending Right / Left arrow events directly to child widgets still turns the page
+        key_right = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(dlg.next_btn, key_right)
+        self.assertEqual(dlg.post.id, 802)
+
+        key_left = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(dlg.tag_list, key_left)
+        self.assertEqual(dlg.post.id, 801)
+
+        # Clicking right edge advances, clicking left edge goes back, center does nothing
+        dlg.image_label.resize(1000, 800)
+        right_click = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(920, 400), QPointF(920, 400),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(dlg.image_label, right_click)
+        self.assertEqual(dlg.post.id, 802)
+
+        center_click = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(500, 400), QPointF(500, 400),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(dlg.image_label, center_click)
+        self.assertEqual(dlg.post.id, 802)
+
+        left_click = QMouseEvent(
+            QEvent.Type.MouseButtonPress, QPointF(50, 400), QPointF(50, 400),
+            Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier
+        )
+        QApplication.sendEvent(dlg.image_label, left_click)
+        self.assertEqual(dlg.post.id, 801)
+
+        # F11 toggles controls back on
+        key_f11 = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_F11, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(dlg.image_label, key_f11)
+        self.assertFalse(dlg._true_fullscreen)
+        self.assertFalse(dlg.top_bar_widget.isHidden())
+
+        dlg.close()
+        dlg.deleteLater()
+
+        # Test Spank Bank download actions
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            s = Settings.load(tmp_path / "settings.json")
+            w = MainWindow(s, data_dir=tmp_path)
+            enqueued: list[tuple[list[int], str]] = []
+            w._enqueue = lambda posts, src=None: enqueued.append(
+                ([p.id for p in posts], (src or w._source).kind)
+            )
+            pool = Pool(88, "Bank_Comic", [801, 802], category="series")
+            w.api.submit = lambda func, *args, **kwargs: kwargs["on_result"]([p1, p2])
+
+            w._toggle_spank_bank(p1)
+            w._toggle_spank_bank(p2)
+            w._toggle_pool_in_bank(pool)
+
+            # Download all posts in Spank Bank
+            w._download_spank_bank_posts()
+            self.assertEqual(len(enqueued), 1)
+            self.assertEqual(set(enqueued[-1][0]), {801, 802})
+            self.assertEqual(enqueued[-1][1], "spank_bank")
+
+            # Download selected post in Spank Bank
+            w.bank_list.item(0).setSelected(True)
+            w._download_selected_bank_posts()
+            self.assertEqual(len(enqueued), 2)
+            self.assertEqual(len(enqueued[-1][0]), 1)
+
+            # Download all pools in Spank Bank
+            w._download_all_bank_pools()
+            self.assertEqual(len(enqueued), 3)
+            self.assertEqual(enqueued[-1][0], [801, 802])
+            self.assertEqual(enqueued[-1][1], "pool")
+
+            # Download entire Spank Bank (posts + pools)
+            enqueued.clear()
+            w._download_entire_spank_bank()
+            self.assertEqual(len(enqueued), 2)
+
+            # Viewing Spank Bank shows "Download Spank Bank" button in ResultTab
+            w._open_spank_bank(new_tab=False)
+            self.assertFalse(w.current_tab.btn_dl_pool.isHidden())
+            self.assertEqual(w.current_tab.btn_dl_pool.text(), "Download Spank Bank")
+
+            w.close()
+
 
 if __name__ == "__main__":
     unittest.main()

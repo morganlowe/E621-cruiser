@@ -193,11 +193,17 @@ class ResultTab(QWidget):
                 """)
                 self.btn_bank_pool.setToolTip("Save this whole pool to Spank Bank for later online viewing"
                                               if is_pool else "Save this artist to Spank Bank")
-        self.btn_dl_pool.setVisible(is_pool)
+        is_spank_bank = self.source.kind == "spank_bank"
+        self.btn_dl_pool.setVisible(is_pool or is_spank_bank)
         if is_pool and self.source.pool:
             self.btn_dl_pool.setText(f"Download Pool ({self.source.pool.post_count} posts)")
+            self.btn_dl_pool.setToolTip("Download all posts in this pool")
+        elif is_spank_bank:
+            self.btn_dl_pool.setText("Download Spank Bank")
+            self.btn_dl_pool.setToolTip("Download all posts in the Spank Bank")
         else:
             self.btn_dl_pool.setText("Download Pool")
+            self.btn_dl_pool.setToolTip("Download all posts in this pool")
 
 
 class MainWindow(QMainWindow):
@@ -717,11 +723,28 @@ class MainWindow(QMainWindow):
         self.bank_subtabs.addTab(self._build_spank_bank_posts_widget(), "Posts (0)")
         self.bank_subtabs.addTab(self._build_spank_bank_artists_widget(), "Artists (0)")
 
-        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online pools, posts and artists for later viewing without "
-                     "downloading them locally. Play full-screen slideshows with timers in reading order or shuffle.</small>")
+        self.btn_dl_entire_bank = QPushButton("Download Spank Bank")
+        self.btn_dl_entire_bank.setToolTip("Download all saved posts and pools in the Spank Bank")
+        self.btn_dl_entire_bank.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                padding: 6px 12px;
+                background-color: #2e7d32;
+                color: #ffffff;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        self.btn_dl_entire_bank.clicked.connect(self._download_entire_spank_bank)
+
+        tip = QLabel("<small>The <b>Spank Bank</b> lets you save online pools, posts and artists for later viewing or "
+                     "batch downloading. Play full-screen slideshows with timers in reading order or shuffle.</small>")
         tip.setWordWrap(True)
 
         lay.addWidget(self.bank_subtabs, 1)
+        lay.addWidget(self.btn_dl_entire_bank)
         lay.addWidget(tip)
 
         QTimer.singleShot(50, self._refresh_spank_bank_ui)
@@ -741,6 +764,7 @@ class MainWindow(QMainWindow):
         self.bank_pools_filter_edit.textChanged.connect(self._filter_bank_pools_list)
 
         self.bank_pools_list = QListWidget()
+        self.bank_pools_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.bank_pools_list.itemDoubleClicked.connect(self._open_bank_saved_pool_item)
 
         btn_row1 = QHBoxLayout()
@@ -764,6 +788,18 @@ class MainWindow(QMainWindow):
         btn_row2.addWidget(slideshow_order_btn)
         btn_row2.addWidget(slideshow_shuffle_btn)
 
+        btn_row_dl = QHBoxLayout()
+        self.btn_dl_bank_pool = QPushButton("Download Pool")
+        self.btn_dl_bank_pool.setStyleSheet("font-weight: bold; color: #48bb78;")
+        self.btn_dl_bank_pool.setToolTip("Download the selected pool(s)")
+        self.btn_dl_bank_pool.clicked.connect(self._download_selected_bank_pools)
+        self.btn_dl_bank_all_pools = QPushButton("Download All Pools")
+        self.btn_dl_bank_all_pools.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.btn_dl_bank_all_pools.setToolTip("Download every pool saved in the Spank Bank")
+        self.btn_dl_bank_all_pools.clicked.connect(self._download_all_bank_pools)
+        btn_row_dl.addWidget(self.btn_dl_bank_pool)
+        btn_row_dl.addWidget(self.btn_dl_bank_all_pools)
+
         btn_row3 = QHBoxLayout()
         del_btn = QPushButton("Remove selected")
         del_btn.clicked.connect(self._remove_selected_bank_pools)
@@ -777,6 +813,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.bank_pools_list, 1)
         lay.addLayout(btn_row1)
         lay.addLayout(btn_row2)
+        lay.addLayout(btn_row_dl)
         lay.addLayout(btn_row3)
         return w
 
@@ -794,6 +831,7 @@ class MainWindow(QMainWindow):
         self.bank_filter_edit.textChanged.connect(self._filter_bank_list)
 
         self.bank_list = QListWidget()
+        self.bank_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.bank_list.itemDoubleClicked.connect(self._open_bank_item)
 
         btn_row1 = QHBoxLayout()
@@ -815,6 +853,18 @@ class MainWindow(QMainWindow):
         btn_row2.addWidget(slideshow_order_btn)
         btn_row2.addWidget(slideshow_shuffle_btn)
 
+        btn_row_dl = QHBoxLayout()
+        self.btn_dl_bank_selected = QPushButton("Download Selected")
+        self.btn_dl_bank_selected.setStyleSheet("font-weight: bold; color: #48bb78;")
+        self.btn_dl_bank_selected.setToolTip("Download the selected post(s) from the Spank Bank")
+        self.btn_dl_bank_selected.clicked.connect(self._download_selected_bank_posts)
+        self.btn_dl_bank_all_posts = QPushButton("Download All Posts")
+        self.btn_dl_bank_all_posts.setStyleSheet("font-weight: bold; color: #60a5fa;")
+        self.btn_dl_bank_all_posts.setToolTip("Download all posts saved in the Spank Bank")
+        self.btn_dl_bank_all_posts.clicked.connect(self._download_spank_bank_posts)
+        btn_row_dl.addWidget(self.btn_dl_bank_selected)
+        btn_row_dl.addWidget(self.btn_dl_bank_all_posts)
+
         btn_row3 = QHBoxLayout()
         del_btn = QPushButton("Remove selected")
         del_btn.clicked.connect(self._remove_selected_bank_items)
@@ -828,6 +878,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.bank_list, 1)
         lay.addLayout(btn_row1)
         lay.addLayout(btn_row2)
+        lay.addLayout(btn_row_dl)
         lay.addLayout(btn_row3)
         return w
 
@@ -1164,6 +1215,69 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 3000)
         self._log(msg)
         return added
+
+    def _download_selected_bank_posts(self) -> None:
+        items = self.bank_list.selectedItems()
+        if not items:
+            QMessageBox.information(self, "No posts selected",
+                                    "Select one or more posts in the Spank Bank posts list first, or click 'Download All Posts'.")
+            return
+        posts = [it.data(Qt.ItemDataRole.UserRole) for it in items if it.data(Qt.ItemDataRole.UserRole)]
+        if posts:
+            self._enqueue(posts, Source("spank_bank", "spank_bank", "spank_bank"))
+
+    def _download_spank_bank_posts(self) -> None:
+        posts = self.spank_bank.get_all()
+        if not posts:
+            QMessageBox.information(self, "Spank Bank empty", "No saved posts in the Spank Bank to download.")
+            return
+        self._enqueue(posts, Source("spank_bank", "spank_bank", "spank_bank"))
+
+    def _download_selected_bank_pools(self) -> None:
+        items = self.bank_pools_list.selectedItems()
+        if not items:
+            if current := self._selected_bank_saved_pool():
+                self._download_pool_by_id(current.id)
+                return
+            QMessageBox.information(self, "No pool selected",
+                                    "Select one or more pools in the saved pools list first.")
+            return
+        for it in items:
+            pool = it.data(Qt.ItemDataRole.UserRole)
+            if pool:
+                src = Source("pool", pool.display_name, f"pool:{pool.id}", pool)
+                self.statusBar().showMessage(f"Fetching pool '{pool.display_name}' for download…")
+                self.api.submit(self.client.get_pool_posts, pool,
+                                on_result=lambda posts, s=src: self._enqueue(self.blacklist.filter(posts)[0], s),
+                                on_error=partial(self._on_api_error, self._gen))
+
+    def _download_all_bank_pools(self) -> None:
+        pools = self.spank_bank.get_all_pools()
+        if not pools:
+            QMessageBox.information(self, "No saved pools", "No pools saved in the Spank Bank to download.")
+            return
+        for pool in pools:
+            src = Source("pool", pool.display_name, f"pool:{pool.id}", pool)
+            self.statusBar().showMessage(f"Fetching pool '{pool.display_name}' for download…")
+            self.api.submit(self.client.get_pool_posts, pool,
+                            on_result=lambda posts, s=src: self._enqueue(self.blacklist.filter(posts)[0], s),
+                            on_error=partial(self._on_api_error, self._gen))
+
+    def _download_entire_spank_bank(self) -> None:
+        posts = self.spank_bank.get_all()
+        pools = self.spank_bank.get_all_pools()
+        if not posts and not pools:
+            QMessageBox.information(self, "Spank Bank empty",
+                                    "No saved posts or pools in the Spank Bank to download.")
+            return
+        if posts:
+            self._enqueue(posts, Source("spank_bank", "spank_bank", "spank_bank"))
+        for pool in pools:
+            src = Source("pool", pool.display_name, f"pool:{pool.id}", pool)
+            self.statusBar().showMessage(f"Fetching pool '{pool.display_name}' for download…")
+            self.api.submit(self.client.get_pool_posts, pool,
+                            on_result=lambda posts_res, s=src: self._enqueue(self.blacklist.filter(posts_res)[0], s),
+                            on_error=partial(self._on_api_error, self._gen))
 
     # ================================================================ artists
     @staticmethod
@@ -1846,6 +1960,8 @@ class MainWindow(QMainWindow):
         s = self._source
         if s.kind == "pool" and s.pool:
             self._download_pool_by_id(s.pool.id)
+        elif s.kind == "spank_bank":
+            self._download_spank_bank_posts()
         else:
             QMessageBox.information(self, "Not in a pool", "The current view is not a pool.")
 
@@ -2037,13 +2153,11 @@ class MainWindow(QMainWindow):
             dlg.set_in_bank(self.spank_bank.has(p.id)),
             dlg.set_pool_in_bank(any(self.spank_bank.has_pool(pid) for pid in p.pools) if p.pools else False),
             dlg.update_interactions(),
-            self._load_preview_image(dlg, p)
+            self._load_preview_image(dlg, p),
+            self.grid.setCurrentItem(self.grid._items[p.id]) if p.id in self.grid._items else None,
         ))
         self._load_preview_image(dlg, post)
-        if start_slideshow:
-            dlg.showFullScreen()
-        else:
-            dlg.showMaximized()
+        dlg.enter_fullscreen()
         return dlg
 
     def _load_preview_image(self, dlg: PreviewDialog, post: Post) -> None:
