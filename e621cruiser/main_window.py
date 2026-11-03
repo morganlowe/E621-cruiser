@@ -369,7 +369,7 @@ class MainWindow(QMainWindow):
             self.organize.addItem(label, key)
         self.organize.currentIndexChanged.connect(self._organize_changed)
         self.tags_file_cb = QCheckBox("Save tags .txt")
-        self.tags_file_cb.toggled.connect(lambda v: setattr(self.settings, "write_tags_file", v))
+        self.tags_file_cb.toggled.connect(self._on_tags_file_toggled)
 
         sel_all = QPushButton("Select all")
         sel_all.clicked.connect(lambda: self.grid.selectAll())
@@ -504,21 +504,26 @@ class MainWindow(QMainWindow):
         self.cb_e = QCheckBox("Explicit")
         rating_row = QHBoxLayout()
         for cb in (self.cb_s, self.cb_q, self.cb_e):
+            cb.toggled.connect(self._on_search_filters_changed)
             rating_row.addWidget(cb)
 
         self.media_filter = QComboBox()
         for label, val in MEDIA_FILTERS:
             self.media_filter.addItem(label, val)
+        self.media_filter.currentIndexChanged.connect(self._on_search_filters_changed)
 
         self.cb_in_pool = QCheckBox("In pools only")
+        self.cb_in_pool.toggled.connect(self._on_search_filters_changed)
 
         self.min_score = QSpinBox()
         self.min_score.setRange(MIN_SCORE_ANY, 100000)
         self.min_score.setSpecialValueText("Any")
         self.min_score.setSingleStep(10)
+        self.min_score.valueChanged.connect(self._on_search_filters_changed)
         self.order = QComboBox()
         for label, val in ORDERS:
             self.order.addItem(label, val)
+        self.order.currentIndexChanged.connect(self._on_search_filters_changed)
 
         form = QFormLayout()
         form.addRow("Rating:", rating_row)
@@ -615,6 +620,20 @@ class MainWindow(QMainWindow):
         cnt = self.saved_list.count()
         self.saved_section.set_badge(f"{cnt} saved" if cnt else "")
 
+    def _on_search_filters_changed(self) -> None:
+        self.settings.rating_s = self.cb_s.isChecked()
+        self.settings.rating_q = self.cb_q.isChecked()
+        self.settings.rating_e = self.cb_e.isChecked()
+        self.settings.media_filter = self.media_filter.currentData() or ""
+        self.settings.pool_only = self.cb_in_pool.isChecked()
+        self.settings.min_score = self.min_score.value()
+        self.settings.order = self.order.currentData() or ""
+        self.settings.save()
+
+    def _on_tags_file_toggled(self, checked: bool) -> None:
+        self.settings.write_tags_file = checked
+        self.settings.save()
+
     def _on_quick_blacklist_toggled(self) -> None:
         self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         self.blacklist = Blacklist(full_blacklist(self.settings))
@@ -624,7 +643,9 @@ class MainWindow(QMainWindow):
     def _select_common_blacklist(self) -> None:
         common = {"gore", "scat", "watersports", "young", "type:swf"}
         for tag, cb in self.quick_bl_checkboxes.items():
+            cb.blockSignals(True)
             cb.setChecked(tag in common)
+            cb.blockSignals(False)
         self.settings.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         self.blacklist = Blacklist(full_blacklist(self.settings))
         self._update_blacklist_badge()
@@ -632,7 +653,9 @@ class MainWindow(QMainWindow):
 
     def _clear_quick_blacklist(self) -> None:
         for cb in self.quick_bl_checkboxes.values():
+            cb.blockSignals(True)
             cb.setChecked(False)
+            cb.blockSignals(False)
         self.settings.quick_blacklist = []
         self.blacklist = Blacklist(full_blacklist(self.settings))
         self._update_blacklist_badge()
@@ -1498,23 +1521,37 @@ class MainWindow(QMainWindow):
     # ============================================================== settings
     def _load_settings_into_ui(self) -> None:
         s = self.settings
+        saved_quick_bl = set(s.quick_blacklist)
         self.dir_edit.setText(s.download_dir)
-        idx = self.organize.findData(s.organize_mode)
-        self.organize.setCurrentIndex(max(0, idx))
-        self.tags_file_cb.setChecked(s.write_tags_file)
-        self.cb_s.setChecked(s.rating_s)
-        self.cb_q.setChecked(s.rating_q)
-        self.cb_e.setChecked(s.rating_e)
-        media_idx = self.media_filter.findData(s.media_filter)
-        self.media_filter.setCurrentIndex(max(0, media_idx))
-        self.cb_in_pool.setChecked(s.pool_only)
+
+        for w in (self.organize, self.tags_file_cb, self.cb_s, self.cb_q, self.cb_e,
+                  self.media_filter, self.cb_in_pool, self.min_score, self.order):
+            w.blockSignals(True)
+        try:
+            idx = self.organize.findData(s.organize_mode)
+            self.organize.setCurrentIndex(max(0, idx))
+            self.tags_file_cb.setChecked(s.write_tags_file)
+            self.cb_s.setChecked(s.rating_s)
+            self.cb_q.setChecked(s.rating_q)
+            self.cb_e.setChecked(s.rating_e)
+            media_idx = self.media_filter.findData(s.media_filter)
+            self.media_filter.setCurrentIndex(max(0, media_idx))
+            self.cb_in_pool.setChecked(s.pool_only)
+            self.min_score.setValue(s.min_score)
+            self.order.setCurrentIndex(max(0, self.order.findData(s.order)))
+        finally:
+            for w in (self.organize, self.tags_file_cb, self.cb_s, self.cb_q, self.cb_e,
+                      self.media_filter, self.cb_in_pool, self.min_score, self.order):
+                w.blockSignals(False)
+
         for tag, cb in self.quick_bl_checkboxes.items():
-            cb.setChecked(tag in s.quick_blacklist)
+            cb.blockSignals(True)
+            cb.setChecked(tag in saved_quick_bl)
+            cb.blockSignals(False)
+        s.quick_blacklist = [tag for tag, cb in self.quick_bl_checkboxes.items() if cb.isChecked()]
         self.bl_section.set_expanded(s.expand_blacklist)
         self.saved_section.set_expanded(s.expand_saved)
         self._update_blacklist_badge()
-        self.min_score.setValue(s.min_score)
-        self.order.setCurrentIndex(max(0, self.order.findData(s.order)))
         self.fav_user.setText(s.favorites_user)
         self.saved_list.clear()
         self.saved_list.addItems(s.saved_searches)
@@ -1961,7 +1998,7 @@ class MainWindow(QMainWindow):
         if s.kind == "pool" and s.pool:
             self._download_pool_by_id(s.pool.id)
         elif s.kind == "spank_bank":
-            self._download_spank_bank_posts()
+            self._download_entire_spank_bank()
         else:
             QMessageBox.information(self, "Not in a pool", "The current view is not a pool.")
 
@@ -2007,8 +2044,9 @@ class MainWindow(QMainWindow):
     def _make_jobs(self, posts: list[Post], src: Source) -> list[DownloadJob]:
         s = self.settings
         base = self.dir_edit.text().strip() or s.download_dir
-        mode = self.organize.currentData()
+        mode = "pool" if src.kind in ("pool", "spank_bank") else self.organize.currentData()
         idx = {pid: i + 1 for i, pid in enumerate(src.pool.post_ids)} if src.pool else {}
+        saved_pools = {pool.id: pool for pool in self.spank_bank.get_all_pools()} if mode == "pool" and not src.pool else {}
         jobs = []
         for p in posts:
             j = DownloadJob(post=p, base_dir=base, mode=mode, source=src.label,
@@ -2016,6 +2054,13 @@ class MainWindow(QMainWindow):
                             skip_downloaded=s.skip_downloaded)
             if src.pool:
                 j.pool_id, j.pool_name, j.pool_index = src.pool.id, src.pool.display_name, idx.get(p.id)
+            elif saved_pools and p.pools:
+                for pid in p.pools:
+                    if sp := saved_pools.get(pid):
+                        j.pool_id = sp.id
+                        j.pool_name = sp.display_name
+                        j.pool_index = (sp.post_ids.index(p.id) + 1) if p.id in sp.post_ids else None
+                        break
             jobs.append(j)
         return jobs
 
@@ -2025,7 +2070,8 @@ class MainWindow(QMainWindow):
             return
         jobs = self._make_jobs(posts, src or self._source)
         self.downloads.enqueue(jobs)
-        self._log(f"Queued {len(jobs)} post(s) → {jobs[0].base_dir} [{self.organize.currentText()}]")
+        mode_label = dict(ORGANIZE_MODES).get(jobs[0].mode, self.organize.currentText())
+        self._log(f"Queued {len(jobs)} post(s) → {jobs[0].base_dir} [{mode_label}]")
 
     def _download_selected(self) -> None:
         posts = self.grid.selected_posts()
@@ -2097,12 +2143,14 @@ class MainWindow(QMainWindow):
     # ================================================================== misc
     def _organize_changed(self) -> None:
         self.settings.organize_mode = self.organize.currentData()
+        self.settings.save()
 
     def _browse_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Download folder", self.dir_edit.text())
         if d:
             self.dir_edit.setText(d)
             self.settings.download_dir = d
+            self.settings.save()
 
     def _open_folder(self) -> None:
         path = Path(self.dir_edit.text().strip() or self.settings.download_dir).expanduser()

@@ -74,7 +74,7 @@ class Settings:
     api_key: str = ""
     blacklist: str = DEFAULT_BLACKLIST
     download_dir: str = str(Path.home() / "Pictures" / "e621")
-    organize_mode: str = "search"
+    organize_mode: str = "pool"
     write_tags_file: bool = False
     skip_downloaded: bool = True
     concurrent_downloads: int = 3

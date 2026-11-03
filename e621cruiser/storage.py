@@ -13,9 +13,9 @@ from typing import Callable
 from .api import Pool, Post
 
 ORGANIZE_MODES: list[tuple[str, str]] = [
+    ("pool", "By pool (or artist if not in a pool)"),
     ("search", "By search / pool (where it came from)"),
     ("artist", "By artist"),
-    ("pool", "By pool"),
     ("copyright", "By copyright (series / franchise)"),
     ("character", "By character"),
     ("species", "By species"),
@@ -63,12 +63,13 @@ def build_target(job: DownloadJob, pool_lookup: Callable[[int], Pool | None]) ->
         folder = base / "pools" / sanitize(f"{name or 'pool'} ({pid})")
         return folder / (f"{idx:04d}_{fname}" if idx else fname)
 
-    if mode in ("search", "pool") and job.pool_id is not None:
+    if job.pool_id is not None:
         return pool_path(job.pool_id, job.pool_name, job.pool_index)
 
     if mode == "pool":
         if not post.pools:
-            return base / "pools" / "_no_pool" / fname
+            names = post.artists
+            return base / "artists" / sanitize(names[0] if names else "_unknown_artist") / fname
         pid = post.pools[0]
         pool = pool_lookup(pid)
         if pool is None:

@@ -58,6 +58,15 @@ class PathTests(unittest.TestCase):
         pool = Pool(9, "Some_Comic", [50, 100])
         self.assertEqual(build_target(self.job("pool", post=post), lambda pid: pool),
                          Path("/dl/pools/Some Comic (9)/0002_100.png"))
+        # Non-pool post in "pool" mode falls back to artist
+        solo_post = make_post(pools=[], tags={"artist": ["fluffy_artist"]})
+        self.assertEqual(build_target(self.job("pool", post=solo_post), lambda pid: None),
+                         Path("/dl/artists/fluffy_artist/100.png"))
+        # Explicit pool_id always uses pool path even if mode is "rating"
+        self.assertEqual(
+            build_target(self.job("rating", pool_id=7, pool_name="My Comic", pool_index=3), lambda pid: None),
+            Path("/dl/pools/My Comic (7)/0003_100.png"),
+        )
 
     def test_sanitize(self):
         self.assertEqual(sanitize('a/b:c*?"<>|'), "a_b_c______")
@@ -509,6 +518,19 @@ class WidgetQueryTests(unittest.TestCase):
             reloaded = Settings.load(cfg_path)
             self.assertIn("scat", reloaded.quick_blacklist)
             self.assertIn("young", reloaded.quick_blacklist)
+            expected_common = set(reloaded.quick_blacklist)
+            self.assertEqual(len(expected_common), 5)
+
+            # Re-open a brand new MainWindow from the saved settings and ensure
+            # _load_settings_into_ui does not clobber multi-item quick_blacklist
+            w2 = MainWindow(reloaded)
+            w2.api.submit = lambda *args, **kwargs: None
+            self.assertEqual(set(w2.settings.quick_blacklist), expected_common)
+            for tag in expected_common:
+                self.assertTrue(w2.quick_bl_checkboxes[tag].isChecked())
+            reloaded_after_init = Settings.load(cfg_path)
+            self.assertEqual(set(reloaded_after_init.quick_blacklist), expected_common)
+            w2.close()
 
             # Click Clear All
             w._clear_quick_blacklist()
@@ -916,6 +938,26 @@ class WidgetQueryTests(unittest.TestCase):
             w._open_spank_bank(new_tab=False)
             self.assertFalse(w.current_tab.btn_dl_pool.isHidden())
             self.assertEqual(w.current_tab.btn_dl_pool.text(), "Download Spank Bank")
+
+            # Verify _make_jobs for Spank Bank ALWAYS uses "pool" mode (pool or artist if not in pool),
+            # even when the UI Organize dropdown is set to "rating"
+            idx_rating = w.organize.findData("rating")
+            w.organize.setCurrentIndex(idx_rating)
+            self.assertEqual(w.organize.currentData(), "rating")
+
+            p_in_pool = make_post(id=801, pools=[88], tags={"artist": ["comic_artist"]})
+            p_no_pool = make_post(id=803, pools=[], tags={"artist": ["solo_artist"]})
+            jobs = w._make_jobs([p_in_pool, p_no_pool], w.current_tab.source)
+            self.assertEqual(jobs[0].mode, "pool")
+            self.assertEqual(jobs[1].mode, "pool")
+            self.assertEqual(
+                build_target(jobs[0], lambda pid: None),
+                Path(w.settings.download_dir) / "pools" / "Bank Comic (88)" / "0001_801.png",
+            )
+            self.assertEqual(
+                build_target(jobs[1], lambda pid: None),
+                Path(w.settings.download_dir) / "artists" / "solo_artist" / "803.png",
+            )
 
             w.close()
 
