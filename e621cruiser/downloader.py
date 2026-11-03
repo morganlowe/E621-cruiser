@@ -128,11 +128,9 @@ class DownloadManager(QObject):
         if not post.file_url:
             return "error", ("no file URL (deleted, or hidden from anonymous users: "
                              "add your API key in Settings)")
-        if job.skip_downloaded and self.history.has(post.id):
-            return "skipped", "already in download history"
 
         target = build_target(job, self._lookup_pool)
-        if target.exists():
+        if job.skip_downloaded and target.exists() and target.stat().st_size > 0:
             self.history.add(post, target)
             return "skipped", f"exists: {target}"
 

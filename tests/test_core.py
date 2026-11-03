@@ -959,6 +959,22 @@ class WidgetQueryTests(unittest.TestCase):
                 Path(w.settings.download_dir) / "artists" / "solo_artist" / "803.png",
             )
 
+            # Verify History & DownloadManager check disk and redownload when files are deleted
+            from e621cruiser.storage import History
+            hist_db = tmp_path / "test_hist.db"
+            hist = History(hist_db)
+            target_file = tmp_path / "artists" / "solo_artist" / "803.png"
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            target_file.write_bytes(b"pngdata")
+            hist.add(p_no_pool, target_file)
+            self.assertTrue(hist.has(803))
+            self.assertEqual(hist.path_for(803), str(target_file))
+
+            # Delete the file on disk -> History automatically detects it's gone and allows redownload
+            target_file.unlink()
+            self.assertFalse(hist.has(803))
+            self.assertIsNone(hist.path_for(803))
+
             w.close()
 
 

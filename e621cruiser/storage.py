@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -119,33 +120,71 @@ class History:
             "post_id INTEGER PRIMARY KEY, md5 TEXT, path TEXT, downloaded_at REAL)"
         )
         self._conn.commit()
-        self._ids = {r[0] for r in self._conn.execute("SELECT post_id FROM downloads")}
+        self._paths: dict[int, str] = {
+            r[0]: r[1] for r in self._conn.execute("SELECT post_id, path FROM downloads")
+        }
+        self._ids = set(self._paths.keys())
+        self.prune_missing()
+
+    def prune_missing(self) -> int:
+        """Remove history entries whose files have been deleted from disk."""
+        with self._lock:
+            missing = [pid for pid, p in self._paths.items() if not p or not os.path.exists(p)]
+            if missing:
+                self._conn.executemany(
+                    "DELETE FROM downloads WHERE post_id = ?", [(pid,) for pid in missing]
+                )
+                self._conn.commit()
+                for pid in missing:
+                    self._paths.pop(pid, None)
+                    self._ids.discard(pid)
+            return len(missing)
+
+    def remove(self, post_id: int) -> None:
+        with self._lock:
+            self._conn.execute("DELETE FROM downloads WHERE post_id = ?", (post_id,))
+            self._conn.commit()
+            self._paths.pop(post_id, None)
+            self._ids.discard(post_id)
 
     def has(self, post_id: int) -> bool:
-        return post_id in self._ids
+        with self._lock:
+            if post_id not in self._ids:
+                return False
+            p = self._paths.get(post_id)
+        if not p or not os.path.exists(p):
+            self.remove(post_id)
+            return False
+        return True
 
     def add(self, post: Post, path: Path) -> None:
+        p_str = str(path)
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO downloads VALUES (?, ?, ?, ?)",
-                (post.id, post.md5, str(path), time.time()),
+                (post.id, post.md5, p_str, time.time()),
             )
             self._conn.commit()
+            self._paths[post.id] = p_str
             self._ids.add(post.id)
 
     def path_for(self, post_id: int) -> str | None:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT path FROM downloads WHERE post_id = ?", (post_id,)).fetchone()
-        return row[0] if row else None
+            p = self._paths.get(post_id)
+        if p and not os.path.exists(p):
+            self.remove(post_id)
+            return None
+        return p
 
     def clear(self) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM downloads")
             self._conn.commit()
+            self._paths.clear()
             self._ids.clear()
 
     def __len__(self) -> int:
+        self.prune_missing()
         return len(self._ids)
 
 

@@ -1964,7 +1964,7 @@ class SettingsDialog(QDialog):
         self.concurrency = QSpinBox()
         self.concurrency.setRange(1, 8)
         self.concurrency.setValue(settings.concurrent_downloads)
-        self.skip = QCheckBox("Skip posts already in download history (even if moved)")
+        self.skip = QCheckBox("Skip posts already downloaded on disk")
         self.skip.setChecked(settings.skip_downloaded)
         self.tags_file = QCheckBox("Save a .txt file with each post's tags next to it")
         self.tags_file.setChecked(settings.write_tags_file)
