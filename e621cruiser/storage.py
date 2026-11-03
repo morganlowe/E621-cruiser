@@ -64,7 +64,7 @@ def build_target(job: DownloadJob, pool_lookup: Callable[[int], Pool | None]) ->
         folder = base / "pools" / sanitize(f"{name or 'pool'} ({pid})")
         return folder / (f"{idx:04d}_{fname}" if idx else fname)
 
-    if job.pool_id is not None:
+    if mode in ("search", "pool") and job.pool_id is not None:
         return pool_path(job.pool_id, job.pool_name, job.pool_index)
 
     if mode == "pool":

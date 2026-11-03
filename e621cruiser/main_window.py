@@ -2044,9 +2044,13 @@ class MainWindow(QMainWindow):
     def _make_jobs(self, posts: list[Post], src: Source) -> list[DownloadJob]:
         s = self.settings
         base = self.dir_edit.text().strip() or s.download_dir
-        mode = "pool" if src.kind in ("pool", "spank_bank") else self.organize.currentData()
+        mode = self.organize.currentData()
         idx = {pid: i + 1 for i, pid in enumerate(src.pool.post_ids)} if src.pool else {}
-        saved_pools = {pool.id: pool for pool in self.spank_bank.get_all_pools()} if mode == "pool" and not src.pool else {}
+        saved_pools = (
+            {pool.id: pool for pool in self.spank_bank.get_all_pools()}
+            if mode in ("pool", "search") and not src.pool
+            else {}
+        )
         jobs = []
         for p in posts:
             j = DownloadJob(post=p, base_dir=base, mode=mode, source=src.label,

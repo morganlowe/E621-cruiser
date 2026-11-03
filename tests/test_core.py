@@ -62,11 +62,6 @@ class PathTests(unittest.TestCase):
         solo_post = make_post(pools=[], tags={"artist": ["fluffy_artist"]})
         self.assertEqual(build_target(self.job("pool", post=solo_post), lambda pid: None),
                          Path("/dl/artists/fluffy_artist/100.png"))
-        # Explicit pool_id always uses pool path even if mode is "rating"
-        self.assertEqual(
-            build_target(self.job("rating", pool_id=7, pool_name="My Comic", pool_index=3), lambda pid: None),
-            Path("/dl/pools/My Comic (7)/0003_100.png"),
-        )
 
     def test_sanitize(self):
         self.assertEqual(sanitize('a/b:c*?"<>|'), "a_b_c______")
@@ -939,12 +934,9 @@ class WidgetQueryTests(unittest.TestCase):
             self.assertFalse(w.current_tab.btn_dl_pool.isHidden())
             self.assertEqual(w.current_tab.btn_dl_pool.text(), "Download Spank Bank")
 
-            # Verify _make_jobs for Spank Bank ALWAYS uses "pool" mode (pool or artist if not in pool),
-            # even when the UI Organize dropdown is set to "rating"
-            idx_rating = w.organize.findData("rating")
-            w.organize.setCurrentIndex(idx_rating)
-            self.assertEqual(w.organize.currentData(), "rating")
-
+            # Verify default Organize mode is "pool" (pool or artist if not in pool),
+            # and the Organize dropdown controls Spank Bank downloads too
+            self.assertEqual(w.organize.currentData(), "pool")
             p_in_pool = make_post(id=801, pools=[88], tags={"artist": ["comic_artist"]})
             p_no_pool = make_post(id=803, pools=[], tags={"artist": ["solo_artist"]})
             jobs = w._make_jobs([p_in_pool, p_no_pool], w.current_tab.source)
@@ -957,6 +949,16 @@ class WidgetQueryTests(unittest.TestCase):
             self.assertEqual(
                 build_target(jobs[1], lambda pid: None),
                 Path(w.settings.download_dir) / "artists" / "solo_artist" / "803.png",
+            )
+
+            # Changing the Organize dropdown changes how Spank Bank downloads are organized
+            idx_artist = w.organize.findData("artist")
+            w.organize.setCurrentIndex(idx_artist)
+            jobs_artist = w._make_jobs([p_in_pool, p_no_pool], w.current_tab.source)
+            self.assertEqual(jobs_artist[0].mode, "artist")
+            self.assertEqual(
+                build_target(jobs_artist[0], lambda pid: None),
+                Path(w.settings.download_dir) / "artists" / "comic_artist" / "801.png",
             )
 
             # Verify History & DownloadManager check disk and redownload when files are deleted
