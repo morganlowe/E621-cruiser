@@ -1,142 +1,123 @@
-# E621 Cruiser
-
 <p align="center">
   <img src="assets/e621-cruiser.png" alt="E621 Cruiser Logo" width="128" height="128">
 </p>
 
+<h1 align="center">E621 Cruiser</h1>
+
 <p align="center">
-  <b>A desktop crawler and gallery app for e621 built with Python & PySide6 (Qt).</b><br>
-  Browse posts, pools, and favorites with instant tag autocomplete, floating hover previews, full-screen viewer, and one-click batch saving.
+  <b>A fast, native desktop browser, gallery, and downloader for e621 built with Python &amp; PySide6 (Qt 6).</b><br>
+  Tabbed tag &amp; pool browsing, instant autocomplete, floating hover previews, true full-screen viewer, automated slideshows, local caching, and one-click batch downloads.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/GUI-PySide6%20%28Qt6%29-green.svg" alt="PySide6">
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-orange.svg" alt="Windows | Linux">
-  <img src="https://img.shields.io/badge/License-MIT-purple.svg" alt="MIT License">
+  <a href="https://github.com/morganlowe/E621-cruiser/releases/latest">
+    <img src="https://img.shields.io/github/v/release/morganlowe/E621-cruiser?style=for-the-badge&color=007ec6" alt="Latest Release">
+  </a>
+  <a href="https://github.com/morganlowe/E621-cruiser/actions/workflows/release.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/morganlowe/E621-cruiser/release.yml?style=for-the-badge&label=Build" alt="Release Build">
+  </a>
+  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-orange?style=for-the-badge" alt="Windows | Linux">
+  <img src="https://img.shields.io/badge/License-MIT-purple?style=for-the-badge" alt="MIT License">
+</p>
+
+<p align="center">
+  <a href="https://github.com/morganlowe/E621-cruiser/releases/latest"><b>Download Latest Release</b></a>
+  &nbsp;·&nbsp;
+  <a href="#download--install">Installation</a>
+  &nbsp;·&nbsp;
+  <a href="#features">Features</a>
+  &nbsp;·&nbsp;
+  <a href="#first-time-setup">First-Time Setup</a>
+  &nbsp;·&nbsp;
+  <a href="#keyboard-shortcuts">Shortcuts</a>
 </p>
 
 ---
 
-## Highlights
+## Download & Install
 
-- **Direct e621 Site Interactions (Credit Artists & Like)**:
-  - **Favorite (Like)**: One-click favorite directly synced to your e621 account via `POST /favorites.json`. Credits the artist, increments site-wide favorite tallies, and adds the post to your personal e621 favorites (`fav:username`).
-  - **Upvote (+1)**: Direct score voting via `POST /posts/<id>/votes.json` to boost post visibility in site-wide top-rated searches.
-  - **Live Indicators**: Shows current favorite counts and score badges in the Inspector and full-screen viewer.
-- **Spank Bank (Online Bookmarks & Slideshows)**:
-  - Save posts, entire multi-page pools, and favorite **artists** to a persistent collection for online viewing without downloading files locally.
-  - Dedicated **Pools**, **Posts**, and **Artists** tabs with instant filtering by title, artist, tag, or ID.
-  - **Latest From All Saved Artists** one-click combined feed (`~artist` OR query) plus per-artist slideshow playback.
-  - Full-screen automated slideshow playback with custom timers (1–300s), reading order, and randomized shuffle modes.
-- **One-Click Artist Browsing**:
-  - Click any artist name link in the Post Inspector or Full-Screen Viewer (or use the **View Artist** / **+ Tab** / **+ Bank Artist** action buttons and context menus) to browse all of their artwork just like on e621.
-- **Tabbed Browsing & Navigation History**:
-  - Open searches and pools in separate tabs (`Ctrl+T`, `Ctrl+W`).
-  - Backward and forward history navigation (`Alt+Left`, `Alt+Right`) per tab with scroll position and query state retention.
-- **Instant Tag Autocomplete**: Pre-seeded with top e621 tags and learns dynamically as you browse. Never overwrites existing query tokens.
-- **Tag Inspector & One-Click Appending**: Color-coded categorized tags (Artist, Species, Character, Copyright, General). Single-click to add/toggle tags in search; right-click to exclude (`-tag`) or isolate.
-- **Search Filters & Media Filters**: Supports `-tag` (exclude), `~tag` (OR), metatags (`score:>100`, `artist:name`), ratings (Safe, Questionable, Explicit), media filters (drawings, animations, webm, gifs), pools only, and custom sort orders.
-- **Collapsible Quick Blacklist**: One-click common exclusions (Gore, Scat, Watersports, Young/Cub, Flash) with instant disk persistence.
-- **Hover & Full-Screen Image Viewer**:
-  - **Hover**: Floating medium preview card directly over thumbnails.
-  - **Click**: Full-screen modal viewer with keyboard navigation (`Left`/`Right`/`A`/`D`), fullscreen (`F11`), tag panel toggle (`T`), favorite (`L`), upvote (`U`), Spank Bank (`B`), slideshow (`Space`), and instant download (`D`).
-- **Pools in Reading Order**: Browse pools by ID or name; one-click download preserves comic reading order (`0001_id.ext`, `0002_id.ext`).
-- **User Favorites**: Load public or private favorites directly from your e621 account.
-- **Client-Side Blacklist**: Filter out unwanted tags locally without leaking rules to the network.
-- **SQLite Download History**: Tracks downloaded IDs to skip duplicates even across renames or directory changes; verifies MD5 checksums.
-- **Flexible Organization Modes**: Organize files by search query, artist, pool, species, character, copyright, rating, or flat.
-- **Cross-Platform (Windows & Linux)**: Native installers, desktop shortcuts, and dedicated launchers for both platforms.
-- **API Rate Compliance**: Complies with e621's 1 req/sec rate limit policy and provides a built-in connection diagnostic tester.
+Grab the prebuilt package for your OS from the [**Latest Release**](https://github.com/morganlowe/E621-cruiser/releases/latest) page:
 
----
+| Platform | Package | Install / Run |
+| :--- | :--- | :--- |
+| **Windows (x64)** | `E621Cruiser-*-windows-x64.exe` | Standalone app — just double-click to run (no Python needed) |
+| **Debian / Ubuntu** | `e621-cruiser_*_all.deb` | `sudo apt install ./e621-cruiser_*_all.deb` |
+| **Arch / CachyOS / Manjaro** | `e621-cruiser-*-any.pkg.tar.zst` | `sudo pacman -U e621-cruiser-*-any.pkg.tar.zst` |
+| **Fedora** | `e621-cruiser-*.noarch.rpm` | `sudo dnf install ./e621-cruiser-*.noarch.rpm` |
 
-## Installation & Setup
+### Platform Notes
 
-### Windows Setup
+- **Windows**: The `.exe` bundles Python and Qt so nothing else needs to be installed. Because it is not code-signed, Windows SmartScreen may show a prompt on first launch — click **More info → Run anyway**.
+- **Debian / Ubuntu**: Installs `e621-cruiser` to your application menu and `PATH`, automatically pulling in `python3-pyside6` and `python3-requests`. Requires Ubuntu 24.04+ / Debian 12+.
+- **Arch / CachyOS**: Install the `.pkg.tar.zst` directly with `pacman -U`, or download the attached `PKGBUILD` from the release and run `makepkg -si`.
+- **Fedora**: `sudo dnf install ./e621-cruiser-*.noarch.rpm` installs the launcher, desktop entry, icons, and Python/PySide6 dependencies automatically.
 
-1. **Prerequisite**: Ensure [Python 3.10+](https://www.python.org/downloads/) is installed and **"Add python.exe to PATH"** was checked during installation.
-2. **Download / Clone**:
+<details>
+<summary><b>Install from Source (Linux &amp; Windows)</b></summary>
+
+#### Linux
+```bash
+git clone https://github.com/morganlowe/E621-cruiser.git
+cd E621-cruiser
+./install.sh
+```
+This creates `.venv`, installs dependencies, and adds **E621 Cruiser** to your application menu, Desktop, and `~/.local/bin/e621-cruiser`. Run `./uninstall.sh` to remove shortcuts.
+
+#### Windows
+1. Install [Python 3.10+](https://www.python.org/downloads/) with **"Add python.exe to PATH"** checked.
+2. Clone and run the installer:
    ```cmd
    git clone https://github.com/morganlowe/E621-cruiser.git
    cd E621-cruiser
-   ```
-3. **Install Shortcuts**: Double-click or run:
-   ```cmd
    install.bat
    ```
-   *This automatically creates the `.venv`, installs PySide6, and adds an **E621 Cruiser** shortcut on your Desktop and in your Start Menu.*
-4. **Quick Launch**: Double-click `run.bat` or use the Desktop shortcut.
+   Launch anytime from the Desktop / Start Menu shortcut or `run.bat`.
+
+</details>
 
 ---
 
-### Linux Setup
+## Features
 
-1. **Quick Install (Desktop & Menu Shortcut)**:
-   ```bash
-   git clone https://github.com/morganlowe/E621-cruiser.git
-   cd E621-cruiser
-   ./install.sh
-   ```
-   *Places an **E621 Cruiser** shortcut on your Desktop and in your application launcher (`~/.local/share/applications`).*
-2. **Command Line / Direct Launch**:
-   ```bash
-   e621-cruiser     # from anywhere via ~/.local/bin
-   ./run.sh         # or directly inside the repository
-   ```
-3. **Uninstall Shortcuts**:
-   ```bash
-   ./uninstall.sh
-   ```
+### Browsing & Search
+- **Multi-Tab Browsing & History**: Open tag searches, artists, and pools in separate tabs (`Ctrl+T` / `Ctrl+W`) with per-tab Back/Forward history (`Alt+Left` / `Alt+Right`).
+- **Instant Tag Autocomplete**: Pre-seeded with popular e621 tags and learns new tags as you browse without overwriting existing query tokens.
+- **Rich Search Filters**: Full support for `-tag` exclusions, `~tag` OR queries, metatags (`score:>100`, `artist:name`), ratings (`Safe` / `Questionable` / `Explicit`), media types, `Pools only`, and sort orders.
+- **Color-Coded Tag Inspector**: Click any tag to add/toggle it in your search; right-click to exclude or isolate. Click any artist name to browse their full gallery.
+- **Quick Blacklist & Client-Side Filtering**: Collapsible one-click exclusions (Gore, Scat, Watersports, Young/Cub, Flash) plus full e621-syntax client-side blacklist rules persisted across restarts.
 
----
+### Viewer, Caching & Slideshows
+- **Hover & True Full-Screen Viewer**: Floating preview card on hover; click to open the full-screen viewer with edge-click and keyboard navigation (`Left`/`Right`/`A`/`D`), `F11` true fullscreen, and toggleable tag sidebar (`T`).
+- **Local Disk & Memory Image Cache**: Checks downloaded library files and local cache before re-fetching thumbnails or previews, and reuses cached full-size images during downloads.
+- **Automated Slideshows**: Play any search, pool, artist, or Spank Bank collection with configurable intervals (`1–300s`), reading order or shuffle mode, and `Space` to pause/resume.
 
-## Configuration & Credentials
+### Spank Bank & Direct e621 Sync
+- **Spank Bank (Online Bookmarks)**: Bookmark **Posts**, **Pools**, and **Artists** in a persistent local database without downloading files. Includes instant filtering, a combined **Latest From All Saved Artists** feed, and batch downloading organized by pool or artist.
+- **Credit Artists on e621**: Favorite (`L`) and upvote (`U`) posts directly from the inspector, viewer, or right-click menu — synced straight to your e621 account so artists receive credit and favorites appear in `fav:yourusername`.
 
-Open **File → Settings** (or press `Ctrl+,`):
-
-1. **Username & API Key**:
-   - Create an API key on [e621.net → Account → Manage API Access](https://e621.net/users/home).
-   - Enter your credentials and click **Test Connection** to verify live connectivity.
-   - *Note*: An API key unlocks posts that e621 restricts for anonymous guests and allows loading private favorites.
-2. **Blacklist**: Enter e621-syntax blacklist rules (one rule per line).
-3. **Storage & Concurrency**: Configure parallel download threads (1–8) and toggle saving `.txt` tag sidecars.
-
-Settings are stored in `~/.config/e621-cruiser/settings.json` (mode `0600`).
-The SQLite download history is kept in `~/.local/share/e621-cruiser/history.db`.
+### Smart Batch Downloads
+- **Pools in Reading Order**: Downloads multi-page comics sequentially as `0001_<id>.ext`, `0002_<id>.ext`, etc.
+- **Flexible Folder Organization**: Organize downloads by `pool`, `artist`, `search`, `species`, `character`, `copyright`, `rating`, or `flat`, with optional `.txt` tag sidecars.
+- **SQLite History & Duplicate Checking**: Tracks downloaded post IDs, verifies MD5 checksums, checks disk before skipping, and prunes deleted files from history.
+- **API Compliant**: Supports e621's v2 posts API (`mode=extended`) with built-in 1 req/sec rate limiting and a connection diagnostic tester.
 
 ---
 
-## e621 Account Interactions & Crediting Artists
+## First-Time Setup
 
-E621 Cruiser connects directly to e621's account interaction API, allowing you to support artists and manage your site-wide likes without opening a browser:
+E621 Cruiser works out of the box in **Anonymous Mode**, or you can connect your e621 account to unlock restricted posts, private favorites, and live favoriting/upvoting:
 
-* **Favorite (Like)**:
-  * Click **Favorite** in the sidebar inspector or viewer (or press `L`).
-  * Sends an authenticated request to `POST /favorites.json` on e621.
-  * Credits the artist on the site, increments the post's public `fav_count`, and stores the post in your personal e621 favorites (`fav:yourusername`).
-  * Clicking again sends `DELETE /favorites/<id>.json` to remove the favorite.
-* **Upvote (+1)**:
-  * Click **▲ +1** in the sidebar inspector or viewer (or press `U`).
-  * Sends an authenticated vote to `POST /posts/<id>/votes.json` on e621 to increase the post's total public score.
-* **Grid Context Menu**: Right-click any thumbnail to favorite, upvote, download, or bookmark to the Spank Bank.
+1. Open **File → Settings** (`Ctrl+,`).
+2. Create an API key at [e621.net → Account → Manage API Access](https://e621.net/users/home).
+3. Enter your **Username** and **API Key**, then click **Test Connection**.
+4. *(Optional)* Add client-side blacklist rules, choose your default download folder, and set parallel download threads (`1–8`).
+
+| File | Linux | Windows |
+| :--- | :--- | :--- |
+| Settings | `~/.config/e621-cruiser/settings.json` | `%APPDATA%\e621-cruiser\settings.json` |
+| History, Spank Bank & Cache | `~/.local/share/e621-cruiser/` | `%LOCALAPPDATA%\e621-cruiser\` |
 
 ---
-
-## Spank Bank & Slideshows
-
-The **Spank Bank** provides a personal, persistent bookmarking system for online viewing without downloading files to disk:
-
-* **Pools, Posts & Artists Separation**:
-  * **Pools Tab**: Bookmark entire comics or themed series with post counts and reading order.
-  * **Posts Tab**: Bookmark individual standalone illustrations and animations.
-  * **Artists Tab**: Bookmark favorite artists directly from any post or by name, open their gallery in a tab, launch slideshows of their work, or view a combined **Latest From All Saved Artists** feed.
-* **Full-Screen Automated Slideshows**:
-  * Play whole pools or your entire saved post bank in full-screen mode.
-  * Set timer intervals (1 to 300 seconds) with automated looping.
-  * Choose between **Reading Order** (sequential) and **Shuffle** (randomized order).
-  * Spacebar instantly pauses or resumes playback.
-* **Instant Filtering**: Search through your bookmarked posts or pools by tag, title, artist, or post ID.
 
 ## Keyboard Shortcuts
 
@@ -145,34 +126,27 @@ The **Spank Bank** provides a personal, persistent bookmarking system for online
 | `Ctrl+F` | Focus tag search bar |
 | `Enter` | Submit tag search / pool query |
 | `Tab` | Autocomplete active tag and add space |
-| `Down / Up` | Navigate autocomplete suggestions |
-| `Escape` | Close autocomplete popup or image viewer |
-| `Left / Right` or `A / D` | Navigate Previous / Next image in viewer |
-| `Space` | Play / Pause slideshow in viewer |
-| `L` | Toggle Favorite on e621 (credits artist) |
-| `U` | Toggle Upvote on e621 (+1) |
-| `B` | Toggle post in Spank Bank |
-| `F11` | Toggle viewer fullscreen mode |
+| `Up / Down` | Navigate autocomplete suggestions |
+| `Escape` | Close autocomplete popup or viewer |
+| `Left / Right` or `A / D` | Previous / Next image in viewer |
+| `Space` | Play / Pause slideshow |
+| `F11` | Toggle true fullscreen |
 | `T` | Toggle tag sidebar in viewer |
-| `Ctrl+T` | Open new search tab |
-| `Ctrl+W` | Close current tab |
-| `Alt+Left` | Navigate back in tab history |
-| `Alt+Right` | Navigate forward in tab history |
-| `Ctrl+D` | Download selected images |
+| `L` | Favorite / unfavorite post on e621 |
+| `U` | Upvote / remove upvote on e621 (`+1`) |
+| `B` | Add / remove post in Spank Bank |
+| `Ctrl+D` | Download selected posts |
+| `Ctrl+T` / `Ctrl+W` | New tab / Close tab |
+| `Alt+Left` / `Alt+Right` | Tab history Back / Forward |
 | `Ctrl+,` | Open Settings |
-| `Ctrl+Q` | Quit application |
+| `Ctrl+Q` | Quit |
 
 ---
 
-## Directory Organization Structure
+## Download Directory Structure
 
-Downloaded files are saved according to your selected organization mode:
-
-```
+```text
 <download_dir>/
-├── searches/
-│   └── <tags>/
-│       └── <id>.<ext>
 ├── pools/
 │   └── <pool_name> (<id>)/
 │       ├── 0001_<id>.<ext>
@@ -180,18 +154,23 @@ Downloaded files are saved according to your selected organization mode:
 ├── artists/
 │   └── <artist>/
 │       └── <id>.<ext>
+├── searches/
+│   └── <tags>/
+│       └── <id>.<ext>
 ├── species/ / characters/ / copyrights/ / ratings/ ...
 └── flat/
 ```
 
 ---
 
-## Development & Tests
+## Development & Packaging
 
 Run the test suite:
 ```bash
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m unittest discover -s tests -v
 ```
+
+Packaging definitions live in [`packaging/`](packaging/) (`.deb`, Arch `PKGBUILD`, Fedora `.spec`, and Windows PyInstaller launcher) and are built automatically on every `v*` tag push via [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ---
 
