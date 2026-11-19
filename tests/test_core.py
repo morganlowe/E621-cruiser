@@ -78,6 +78,118 @@ class PostTests(unittest.TestCase):
         p = make_post(file={"md5": "x", "ext": "jpg", "url": None})
         self.assertIsNone(p.file_url)
 
+    def test_v2_extended_format(self):
+        raw = {
+            "id": 734685,
+            "files": {
+                "meta": {"md5": "7dc945", "ext": "png", "size": 254896, "has_sample": True},
+                "original": {"width": 2000, "height": 1500, "url": "https://static1.e621.net/data/7d/c9/7dc945.png"},
+                "preview": {
+                    "width": 374,
+                    "height": 256,
+                    "jpg": "https://static1.e621.net/data/preview/7d/c9/7dc945.jpg",
+                    "webp": "https://static1.e621.net/data/preview/7d/c9/7dc945.webp",
+                },
+                "sample": {
+                    "width": 850,
+                    "height": 638,
+                    "jpg": "https://static1.e621.net/data/sample/7d/c9/7dc945.jpg",
+                    "webp": "https://static1.e621.net/data/sample/7d/c9/7dc945.webp",
+                },
+            },
+            "stats": {
+                "score": {"up": 80, "down": -2, "total": 78},
+                "fav_count": 134,
+                "is_favorited": True,
+                "vote": 1,
+            },
+            "has": {"sample": True},
+            "pools": [6894],
+            "rating": "e",
+            "description": "hello",
+            "tags": {
+                "artist": ["conditional_dnp", "etuix"],
+                "general": ["anthro", "comic"],
+                "species": ["canine"],
+            },
+        }
+        p = Post.from_json(raw)
+        self.assertEqual(p.id, 734685)
+        self.assertEqual(p.md5, "7dc945")
+        self.assertEqual(p.ext, "png")
+        self.assertEqual(p.width, 2000)
+        self.assertEqual(p.height, 1500)
+        self.assertEqual(p.size, 254896)
+        self.assertEqual(p.file_url, "https://static1.e621.net/data/7d/c9/7dc945.png")
+        self.assertEqual(p.preview_url, "https://static1.e621.net/data/preview/7d/c9/7dc945.jpg")
+        self.assertEqual(p.sample_url, "https://static1.e621.net/data/sample/7d/c9/7dc945.jpg")
+        self.assertEqual(p.score, 78)
+        self.assertEqual(p.fav_count, 134)
+        self.assertTrue(p.is_favorited)
+        self.assertEqual(p.own_vote, 1)
+        self.assertEqual(p.artists, ["etuix"])
+        self.assertEqual(p.pools, [6894])
+        self.assertIn("anthro", p.all_tags)
+
+    def test_v2_basic_flat_tags_and_no_sample(self):
+        raw = {
+            "id": 999,
+            "files": {
+                "meta": {"md5": "abc", "ext": "jpg", "size": 100, "has_sample": False},
+                "original": {"width": 500, "height": 500, "url": "https://x/orig.jpg"},
+                "preview": {"width": 150, "height": 150, "jpg": None, "webp": "https://x/prev.webp"},
+                "sample": {"width": 500, "height": 500, "jpg": "https://x/orig.jpg"},
+            },
+            "stats": {"score": {"total": 3}, "fav_count": 1, "is_favorited": False, "vote": 0},
+            "rating": "s",
+            "tags": ["wolf", "solo"],
+        }
+        p = Post.from_json(raw)
+        self.assertEqual(p.sample_url, "https://x/orig.jpg")
+        self.assertEqual(p.preview_url, "https://x/prev.webp")
+        self.assertEqual(p.tags, {"general": ["wolf", "solo"]})
+        self.assertEqual(p.all_tags, {"wolf", "solo"})
+
+    def test_search_posts_accepts_v2_list_and_legacy_dict(self):
+        from unittest.mock import patch
+        from e621cruiser.api import E621Client
+
+        client = E621Client(interval=0)
+        v2_item = {
+            "id": 1,
+            "files": {
+                "meta": {"md5": "a", "ext": "png", "size": 1, "has_sample": False},
+                "original": {"width": 10, "height": 10, "url": "https://x/1.png"},
+                "preview": {"jpg": "https://x/1p.jpg"},
+                "sample": {"jpg": "https://x/1.png"},
+            },
+            "stats": {"score": {"total": 2}, "fav_count": 0, "is_favorited": False, "vote": 0},
+            "rating": "s",
+            "tags": {"artist": ["etuix"], "general": ["solo"]},
+        }
+        with patch.object(client, "_get", return_value=[v2_item]) as mock_get:
+            posts = client.search_posts("etuix pool:any -gore", page=1, limit=5)
+        mock_get.assert_called_once_with(
+            "/posts.json",
+            {"tags": "etuix pool:any -gore", "page": 1, "limit": 5, "mode": "extended"},
+        )
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0].artists, ["etuix"])
+
+        legacy_resp = {"posts": [{
+            "id": 2,
+            "file": {"md5": "b", "ext": "jpg", "url": "https://x/2.jpg", "width": 20, "height": 20, "size": 2},
+            "preview": {"url": "https://x/2p.jpg"},
+            "sample": {"has": False},
+            "score": {"total": 4},
+            "rating": "q",
+            "tags": {"artist": ["someone"]},
+        }]}
+        with patch.object(client, "_get", return_value=legacy_resp):
+            posts_legacy = client.search_posts("someone")
+        self.assertEqual(len(posts_legacy), 1)
+        self.assertEqual(posts_legacy[0].id, 2)
+
 
 class WidgetQueryTests(unittest.TestCase):
     @classmethod
@@ -978,6 +1090,205 @@ class WidgetQueryTests(unittest.TestCase):
             self.assertIsNone(hist.path_for(803))
 
             w.close()
+
+    def test_slideshow_speed_option(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        from e621cruiser.settings import Settings
+        from e621cruiser.widgets import PreviewDialog, SettingsDialog
+
+        p1 = make_post(id=401)
+        p2 = make_post(id=402)
+        dlg = PreviewDialog(p1, all_posts=[p1, p2], slideshow_interval=3.0)
+
+        # Initial interval matches passed setting
+        self.assertAlmostEqual(dlg.spin_slideshow_sec.value(), 3.0)
+        self.assertEqual(dlg.combo_slideshow_speed.currentText(), "3s")
+
+        # Changing preset updates spinbox
+        idx_2s = dlg.combo_slideshow_speed.findText("2s (Fast)")
+        self.assertTrue(idx_2s >= 0)
+        dlg.combo_slideshow_speed.setCurrentIndex(idx_2s)
+        self.assertAlmostEqual(dlg.spin_slideshow_sec.value(), 2.0)
+
+        # Changing spinbox to custom value sets combo to Custom
+        dlg.spin_slideshow_sec.setValue(4.5)
+        self.assertEqual(dlg.combo_slideshow_speed.currentText(), "Custom")
+
+        # Keyboard shortcuts: + increases speed (decreases interval)
+        key_plus = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Plus, Qt.KeyboardModifier.NoModifier)
+        dlg.keyPressEvent(key_plus)
+        self.assertAlmostEqual(dlg.spin_slideshow_sec.value(), 3.5)
+
+        # Keyboard shortcuts: - decreases speed (increases interval)
+        key_minus = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Minus, Qt.KeyboardModifier.NoModifier)
+        dlg.keyPressEvent(key_minus)
+        self.assertAlmostEqual(dlg.spin_slideshow_sec.value(), 4.5)
+
+        # Signal emission
+        emitted = []
+        dlg.slideshow_interval_changed.connect(emitted.append)
+        dlg.set_slideshow_interval(1.0)
+        self.assertEqual(emitted, [1.0])
+
+        # Active timer updates interval
+        dlg.start_slideshow()
+        self.assertTrue(dlg._slideshow_timer.isActive())
+        self.assertEqual(dlg._slideshow_timer.interval(), 1000)
+
+        dlg.set_slideshow_interval(0.5)
+        self.assertEqual(dlg._slideshow_timer.interval(), 500)
+        self.assertIn("0.5s", dlg.slideshow_status.text())
+
+        dlg.close()
+        dlg.deleteLater()
+
+        # Settings dialog verification
+        s = Settings(slideshow_interval=2.5)
+        sdlg = SettingsDialog(s, history_count=0)
+        self.assertAlmostEqual(sdlg.slideshow_interval.value(), 2.5)
+        sdlg.slideshow_interval.setValue(1.5)
+        sdlg.apply_to(s)
+        self.assertAlmostEqual(s.slideshow_interval, 1.5)
+        sdlg.close()
+        sdlg.deleteLater()
+
+    def test_local_image_checking_and_caching(self):
+        import tempfile
+        from unittest.mock import patch
+        from PySide6.QtGui import QImage, QColor
+        from e621cruiser.storage import ImageCache, History
+        from e621cruiser.workers import fetch_image
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cache = ImageCache(tmp_path / "cache")
+
+            # 1. ImageCache paths
+            self.assertEqual(cache.preview_path(123, "png"), tmp_path / "cache" / "previews" / "123.png")
+            self.assertEqual(cache.thumb_path(123, "jpg"), tmp_path / "cache" / "thumbs" / "123.jpg")
+
+            # 2. In-memory cache
+            test_img = QImage(10, 10, QImage.Format.Format_RGB32)
+            test_img.fill(QColor("red"))
+            cache.set_memory_preview(123, test_img)
+            self.assertIsNotNone(cache.get_memory_preview(123))
+            self.assertIsNone(cache.get_memory_preview(999))
+
+            cache.set_memory_thumb(123, test_img)
+            self.assertIsNotNone(cache.get_memory_thumb(123))
+
+            # 3. Local disk check with fetch_image
+            # Create a local test image file
+            local_img_file = tmp_path / "downloaded_123.png"
+            test_img.save(str(local_img_file), "PNG")
+
+            # fetch_image with local_path: should read directly without network
+            with patch("e621cruiser.workers.http_session") as mock_session:
+                loaded = fetch_image("http://fake.url/img.png", local_path=local_img_file)
+                self.assertFalse(mock_session.called)
+                self.assertFalse(loaded.isNull())
+                self.assertEqual(loaded.size().width(), 10)
+
+            # fetch_image with cache_path: should read directly without network when file exists
+            cached_file = cache.preview_path(123, "png")
+            test_img.save(str(cached_file), "PNG")
+
+            with patch("e621cruiser.workers.http_session") as mock_session:
+                loaded_cache = fetch_image("http://fake.url/img.png", cache_path=cached_file)
+                self.assertFalse(mock_session.called)
+                self.assertFalse(loaded_cache.isNull())
+                self.assertEqual(loaded_cache.size().width(), 10)
+
+            # fetch_image when neither exists: fetches from network and writes to cache_path
+            new_cache_file = cache.preview_path(456, "png")
+            self.assertFalse(new_cache_file.exists())
+
+            # Generate PNG bytes
+            from PySide6.QtCore import QByteArray, QBuffer, QIODevice
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QIODevice.OpenModeFlag.WriteOnly)
+            test_img.save(buf, "PNG")
+            buf.close()
+            png_bytes = bytes(ba.data())
+
+            class FakeResponse:
+                def __init__(self, data):
+                    self.content = data
+                def raise_for_status(self):
+                    pass
+
+            with patch("e621cruiser.workers.http_session") as mock_session:
+                mock_session.return_value.get.return_value = FakeResponse(png_bytes)
+                res_img = fetch_image("http://fake.url/new.png", cache_path=new_cache_file)
+                self.assertTrue(mock_session.called)
+                self.assertFalse(res_img.isNull())
+                # Verify it was saved to cache_path
+                self.assertTrue(new_cache_file.exists())
+                self.assertGreater(new_cache_file.stat().st_size, 0)
+
+            # Repeat viewing: now that it's cached, fetching again must NOT call network
+            with patch("e621cruiser.workers.http_session") as mock_session:
+                repeat_img = fetch_image("http://fake.url/new.png", cache_path=new_cache_file)
+                self.assertFalse(mock_session.called)
+                self.assertFalse(repeat_img.isNull())
+
+            # 4. find_local_image_path
+            p = make_post(id=777, ext="png")
+            hist = History(tmp_path / "hist.db")
+            # Not found initially
+            self.assertIsNone(cache.find_local_image_path(p, hist))
+
+            # Found in history
+            hist_file = tmp_path / "777.png"
+            test_img.save(str(hist_file), "PNG")
+            hist.add(p, hist_file)
+            self.assertEqual(cache.find_local_image_path(p, hist), hist_file)
+
+    def test_main_window_preview_and_caching(self):
+        import tempfile
+        from unittest.mock import patch
+        from PySide6.QtGui import QImage, QColor
+        from e621cruiser.main_window import MainWindow
+        from e621cruiser.settings import Settings
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            settings = Settings(slideshow_interval=2.0)
+            w = MainWindow(settings, data_dir=tmp_path)
+            w.api.submit = lambda *args, **kwargs: None
+
+            p1 = make_post(id=501, ext="png", sample_url="http://fake.url/501.png")
+            p2 = make_post(id=502, ext="png", sample_url="http://fake.url/502.png")
+
+            # Open preview
+            dlg = w._preview(p1, start_slideshow=False, posts=[p1, p2])
+            self.assertAlmostEqual(dlg.spin_slideshow_sec.value(), 2.0)
+
+            # Changing speed updates window settings
+            dlg.set_slideshow_interval(3.5)
+            self.assertAlmostEqual(w.settings.slideshow_interval, 3.5)
+
+            # Put image into image_cache memory preview
+            img = QImage(20, 20, QImage.Format.Format_RGB32)
+            img.fill(QColor("blue"))
+            w.image_cache.set_memory_preview(501, img)
+
+            # Loading preview image should load from memory cache immediately for p1,
+            # and prefetch next post (p2) in the background
+            with patch.object(w.thumbs, "submit") as mock_submit:
+                w._load_preview_image(dlg, p1)
+                self.assertIsNotNone(dlg._image)
+                self.assertEqual(dlg._image.size().width(), 20)
+                # Verify any background submit was for p2 prefetch, not p1
+                self.assertEqual(mock_submit.call_count, 1)
+                self.assertIn("502", str(mock_submit.call_args))
+
+            dlg.close()
+            dlg.deleteLater()
+            w.close()
+
 
 
 if __name__ == "__main__":

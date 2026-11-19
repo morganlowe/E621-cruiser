@@ -90,31 +90,83 @@ class Post:
 
     @classmethod
     def from_json(cls, d: dict) -> "Post":
-        f = d.get("file") or {}
-        preview = d.get("preview") or {}
-        sample = d.get("sample") or {}
-        score = d.get("score") or {}
-        score_val = score.get("total") if isinstance(score, dict) else score
+        if isinstance(d.get("files"), dict):
+            # e621 v2 post format (default since Nov 18, 2026)
+            files = d["files"]
+            meta = files.get("meta") or {}
+            original = files.get("original") or {}
+            preview = files.get("preview") or {}
+            sample = files.get("sample") or {}
+            stats = d.get("stats") or {}
+            has_info = d.get("has") or {}
+
+            file_url = original.get("url")
+            preview_url = preview.get("jpg") or preview.get("webp") or preview.get("url")
+            has_sample = bool(meta.get("has_sample") or has_info.get("sample"))
+            sample_candidate = sample.get("jpg") or sample.get("webp") or sample.get("url")
+            sample_url = sample_candidate if has_sample else file_url
+
+            md5 = meta.get("md5") or ""
+            ext = meta.get("ext") or ""
+            width = int(original.get("width") or 0)
+            height = int(original.get("height") or 0)
+            size = int(meta.get("size") or 0)
+
+            score = stats.get("score") or {}
+            score_val = score.get("total") if isinstance(score, dict) else score
+            fav_count = int(stats.get("fav_count") or 0)
+            is_favorited = bool(stats.get("is_favorited", False))
+            own_vote = int(stats.get("vote") or 0)
+        else:
+            # Legacy e621 v1 post format
+            f = d.get("file") or {}
+            preview = d.get("preview") or {}
+            sample = d.get("sample") or {}
+            score = d.get("score") or {}
+            score_val = score.get("total") if isinstance(score, dict) else score
+
+            file_url = f.get("url")
+            preview_url = preview.get("url")
+            sample_url = sample.get("url") if sample.get("has") else file_url
+
+            md5 = f.get("md5") or ""
+            ext = f.get("ext") or ""
+            width = int(f.get("width") or 0)
+            height = int(f.get("height") or 0)
+            size = int(f.get("size") or 0)
+
+            fav_count = int(d.get("fav_count") or 0)
+            is_favorited = bool(d.get("is_favorited", False))
+            own_vote = int(d.get("own_vote") or 0)
+
+        raw_tags = d.get("tags")
+        if isinstance(raw_tags, dict):
+            tags = {k: list(v) for k, v in raw_tags.items()}
+        elif isinstance(raw_tags, list):
+            tags = {"general": list(raw_tags)}
+        else:
+            tags = {}
+
         return cls(
             id=int(d["id"]),
-            md5=f.get("md5") or "",
-            ext=f.get("ext") or "",
-            # file.url is null for deleted posts and, for anonymous users,
+            md5=md5,
+            ext=ext,
+            # file_url is null for deleted posts and, for anonymous users,
             # for posts hidden by e621's global blacklist (log in to fix).
-            file_url=f.get("url"),
-            preview_url=preview.get("url"),
-            sample_url=sample.get("url") if sample.get("has") else f.get("url"),
-            width=int(f.get("width") or 0),
-            height=int(f.get("height") or 0),
-            size=int(f.get("size") or 0),
+            file_url=file_url,
+            preview_url=preview_url,
+            sample_url=sample_url,
+            width=width,
+            height=height,
+            size=size,
             rating=d.get("rating") or "",
             score=int(score_val or 0),
-            fav_count=int(d.get("fav_count") or 0),
-            tags={k: list(v) for k, v in (d.get("tags") or {}).items()},
+            fav_count=fav_count,
+            tags=tags,
             pools=list(d.get("pools") or []),
             description=d.get("description") or "",
-            is_favorited=bool(d.get("is_favorited", False)),
-            own_vote=int(d.get("own_vote") or 0),
+            is_favorited=is_favorited,
+            own_vote=own_vote,
         )
 
     @property
@@ -324,8 +376,17 @@ class E621Client:
 
     # ----------------------------------------------------------------- posts
     def search_posts(self, tags: str, page: int | str = 1, limit: int = POSTS_PER_PAGE) -> list[Post]:
-        data = self._get("/posts.json", {"tags": tags, "page": page, "limit": limit})
-        return [Post.from_json(p) for p in data.get("posts", [])]
+        data = self._get(
+            "/posts.json",
+            {"tags": tags, "page": page, "limit": limit, "mode": "extended"},
+        )
+        if isinstance(data, list):
+            raw_posts = data
+        elif isinstance(data, dict):
+            raw_posts = data.get("posts", [])
+        else:
+            raw_posts = []
+        return [Post.from_json(p) for p in raw_posts]
 
     def fetch_all_posts(
         self,

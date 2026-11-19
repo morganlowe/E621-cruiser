@@ -9,7 +9,7 @@ from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFont, QIcon, QImage, QPainter,
                            QPixmap, QStandardItem, QStandardItemModel)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QCompleter, QDialog,
-                               QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLayout,
+                               QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QLayout,
                                QLineEdit, QListView, QListWidget, QListWidgetItem,
                                QMenu, QPlainTextEdit, QPushButton, QSpinBox, QSplitter,
                                QVBoxLayout, QWidget)
@@ -1154,6 +1154,21 @@ class PostInspector(QWidget):
         self.tag_list.refresh_active_tags(active_query)
 
 
+SLIDESHOW_SPEED_PRESETS: list[tuple[str, float]] = [
+    ("0.5s (Fastest)", 0.5),
+    ("1s (Very Fast)", 1.0),
+    ("2s (Fast)", 2.0),
+    ("3s", 3.0),
+    ("4s", 4.0),
+    ("5s (Normal)", 5.0),
+    ("7s", 7.0),
+    ("10s (Slow)", 10.0),
+    ("15s", 15.0),
+    ("20s", 20.0),
+    ("30s (Very Slow)", 30.0),
+]
+
+
 # ------------------------------------------------------------------ full screen viewer
 class PreviewDialog(QDialog):
     add_tag = Signal(str)
@@ -1171,11 +1186,13 @@ class PreviewDialog(QDialog):
     artist_view = Signal(str)
     artist_view_new_tab = Signal(str)
     artist_bank_toggle = Signal(str)
+    slideshow_interval_changed = Signal(float)
 
     def __init__(self, post: Post, all_posts: list[Post] | None = None, index: int = 0,
                  active_query: str = "", in_bank: bool = False, pool_in_bank: bool = False,
                  start_slideshow: bool = False, shuffle: bool = False,
-                 artist_in_bank=None, parent: QWidget | None = None):
+                 artist_in_bank=None, parent: QWidget | None = None,
+                 slideshow_interval: float = 5.0):
         super().__init__(parent)
         self._posts = all_posts if all_posts else [post]
         self._index = max(0, min(len(self._posts) - 1, index))
@@ -1282,12 +1299,22 @@ class PreviewDialog(QDialog):
         self.combo_slideshow_order.setToolTip("Slideshow play order")
         self.combo_slideshow_order.currentIndexChanged.connect(self._reset_shuffle_queue)
 
-        self.spin_slideshow_sec = QSpinBox()
-        self.spin_slideshow_sec.setRange(1, 300)
-        self.spin_slideshow_sec.setValue(5)
+        self.combo_slideshow_speed = QComboBox()
+        self.combo_slideshow_speed.setToolTip("Slideshow speed preset")
+        for label, sec_val in SLIDESHOW_SPEED_PRESETS:
+            self.combo_slideshow_speed.addItem(label, sec_val)
+        self.combo_slideshow_speed.addItem("Custom", None)
+        self.combo_slideshow_speed.currentIndexChanged.connect(self._on_slideshow_speed_preset_changed)
+
+        self.spin_slideshow_sec = QDoubleSpinBox()
+        self.spin_slideshow_sec.setRange(0.5, 300.0)
+        self.spin_slideshow_sec.setSingleStep(0.5)
+        self.spin_slideshow_sec.setDecimals(1)
+        self.spin_slideshow_sec.setValue(slideshow_interval)
         self.spin_slideshow_sec.setSuffix(" s")
         self.spin_slideshow_sec.setToolTip("Slideshow interval in seconds")
         self.spin_slideshow_sec.valueChanged.connect(self._on_slideshow_interval_changed)
+        self._sync_speed_combo(slideshow_interval)
 
         self.cb_slideshow_loop = QCheckBox("Loop")
         self.cb_slideshow_loop.setChecked(True)
@@ -1320,7 +1347,8 @@ class PreviewDialog(QDialog):
         play_bar.addWidget(self.btn_slideshow)
         play_bar.addWidget(QLabel("Order:"))
         play_bar.addWidget(self.combo_slideshow_order)
-        play_bar.addWidget(QLabel("Time:"))
+        play_bar.addWidget(QLabel("Speed:"))
+        play_bar.addWidget(self.combo_slideshow_speed)
         play_bar.addWidget(self.spin_slideshow_sec)
         play_bar.addWidget(self.cb_slideshow_loop)
         play_bar.addWidget(self.slideshow_status)
@@ -1536,6 +1564,46 @@ class PreviewDialog(QDialog):
     def _reset_shuffle_queue(self) -> None:
         self._shuffle_queue.clear()
 
+    def _on_slideshow_speed_preset_changed(self, idx: int) -> None:
+        val = self.combo_slideshow_speed.itemData(idx)
+        if val is not None:
+            self.spin_slideshow_sec.blockSignals(True)
+            self.spin_slideshow_sec.setValue(float(val))
+            self.spin_slideshow_sec.blockSignals(False)
+            self._on_slideshow_interval_changed(float(val))
+
+    def _sync_speed_combo(self, val: float) -> None:
+        self.combo_slideshow_speed.blockSignals(True)
+        matched = False
+        for i in range(self.combo_slideshow_speed.count()):
+            preset_val = self.combo_slideshow_speed.itemData(i)
+            if preset_val is not None and abs(preset_val - val) < 0.05:
+                self.combo_slideshow_speed.setCurrentIndex(i)
+                matched = True
+                break
+        if not matched:
+            custom_idx = self.combo_slideshow_speed.findText("Custom")
+            if custom_idx >= 0:
+                self.combo_slideshow_speed.setCurrentIndex(custom_idx)
+        self.combo_slideshow_speed.blockSignals(False)
+
+    def set_slideshow_interval(self, val: float) -> None:
+        self.spin_slideshow_sec.setValue(max(0.5, min(300.0, val)))
+
+    def increase_slideshow_speed(self) -> None:
+        """Decrease interval (make slideshow faster)."""
+        cur = self.spin_slideshow_sec.value()
+        step = 0.5 if cur <= 3.0 else 1.0
+        new_val = max(0.5, cur - step)
+        self.spin_slideshow_sec.setValue(new_val)
+
+    def decrease_slideshow_speed(self) -> None:
+        """Increase interval (make slideshow slower)."""
+        cur = self.spin_slideshow_sec.value()
+        step = 0.5 if cur < 3.0 else 1.0
+        new_val = min(300.0, cur + step)
+        self.spin_slideshow_sec.setValue(new_val)
+
     def _toggle_slideshow_clicked(self, checked: bool) -> None:
         if checked:
             self.start_slideshow()
@@ -1550,8 +1618,8 @@ class PreviewDialog(QDialog):
         self.btn_slideshow.setText("Pause Slideshow (Space)")
         sec = self.spin_slideshow_sec.value()
         order = self.combo_slideshow_order.currentText()
-        self.slideshow_status.setText(f"Playing ({sec}s · {order})")
-        self._slideshow_timer.start(sec * 1000)
+        self.slideshow_status.setText(f"Playing ({sec:g}s · {order})")
+        self._slideshow_timer.start(int(sec * 1000))
 
     def pause_slideshow(self) -> None:
         self.btn_slideshow.setChecked(False)
@@ -1565,11 +1633,13 @@ class PreviewDialog(QDialog):
         else:
             self.start_slideshow()
 
-    def _on_slideshow_interval_changed(self, val: int) -> None:
+    def _on_slideshow_interval_changed(self, val: float) -> None:
+        self._sync_speed_combo(val)
         if self._slideshow_timer.isActive():
-            self._slideshow_timer.start(val * 1000)
+            self._slideshow_timer.start(int(val * 1000))
             order = self.combo_slideshow_order.currentText()
-            self.slideshow_status.setText(f"Playing ({val}s · {order})")
+            self.slideshow_status.setText(f"Playing ({val:g}s · {order})")
+        self.slideshow_interval_changed.emit(val)
 
     def _on_slideshow_tick(self) -> None:
         order = self.combo_slideshow_order.currentText()
@@ -1646,7 +1716,7 @@ class PreviewDialog(QDialog):
             return
         self.set_post(self._posts[self._index])
         if self._slideshow_timer.isActive():
-            self._slideshow_timer.start(self.spin_slideshow_sec.value() * 1000)
+            self._slideshow_timer.start(int(self.spin_slideshow_sec.value() * 1000))
 
     def next_post(self) -> None:
         if self._index < len(self._posts) - 1:
@@ -1657,7 +1727,7 @@ class PreviewDialog(QDialog):
             return
         self.set_post(self._posts[self._index])
         if self._slideshow_timer.isActive():
-            self._slideshow_timer.start(self.spin_slideshow_sec.value() * 1000)
+            self._slideshow_timer.start(int(self.spin_slideshow_sec.value() * 1000))
 
     def set_post(self, post: Post) -> None:
         self.post = post
@@ -1833,6 +1903,13 @@ class PreviewDialog(QDialog):
         menu.addSeparator()
         slide_txt = "Pause Slideshow (Space)" if self._slideshow_timer.isActive() else "Play Slideshow (Space)"
         menu.addAction(slide_txt, self.toggle_slideshow)
+        speed_menu = menu.addMenu("Slideshow Speed")
+        cur_sec = self.spin_slideshow_sec.value()
+        for label, sec_val in SLIDESHOW_SPEED_PRESETS:
+            act = speed_menu.addAction(label, lambda s=sec_val: self.set_slideshow_interval(s))
+            if abs(cur_sec - sec_val) < 0.05:
+                act.setCheckable(True)
+                act.setChecked(True)
         bank_txt = "Remove from Spank Bank (B)" if self._in_bank else "+ Save to Spank Bank (B)"
         menu.addAction(bank_txt, self._on_bank_clicked)
         fav_txt = "Remove Favorite (L)" if self.post.is_favorited else "Favorite on e621 (L)"
@@ -1893,6 +1970,8 @@ class PreviewDialog(QDialog):
             Qt.Key.Key_S, Qt.Key.Key_F11,
             Qt.Key.Key_F, Qt.Key.Key_Escape,
             Qt.Key.Key_Q, Qt.Key.Key_T,
+            Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_BracketRight,
+            Qt.Key.Key_Minus, Qt.Key.Key_Underscore, Qt.Key.Key_BracketLeft,
         )
 
     def _handle_key(self, key: int) -> bool:
@@ -1904,6 +1983,12 @@ class PreviewDialog(QDialog):
             return True
         if key == Qt.Key.Key_Space:
             self.toggle_slideshow()
+            return True
+        if key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal, Qt.Key.Key_BracketRight):
+            self.increase_slideshow_speed()
+            return True
+        if key in (Qt.Key.Key_Minus, Qt.Key.Key_Underscore, Qt.Key.Key_BracketLeft):
+            self.decrease_slideshow_speed()
             return True
         if key == Qt.Key.Key_B:
             self._on_bank_clicked()
@@ -1964,6 +2049,12 @@ class SettingsDialog(QDialog):
         self.concurrency = QSpinBox()
         self.concurrency.setRange(1, 8)
         self.concurrency.setValue(settings.concurrent_downloads)
+        self.slideshow_interval = QDoubleSpinBox()
+        self.slideshow_interval.setRange(0.5, 300.0)
+        self.slideshow_interval.setSingleStep(0.5)
+        self.slideshow_interval.setDecimals(1)
+        self.slideshow_interval.setValue(getattr(settings, "slideshow_interval", 5.0))
+        self.slideshow_interval.setSuffix(" s")
         self.skip = QCheckBox("Skip posts already downloaded on disk")
         self.skip.setChecked(settings.skip_downloaded)
         self.tags_file = QCheckBox("Save a .txt file with each post's tags next to it")
@@ -1986,6 +2077,7 @@ class SettingsDialog(QDialog):
         form.addRow("", key_help)
         form.addRow("Blacklist:", self.blacklist)
         form.addRow("Parallel downloads:", self.concurrency)
+        form.addRow("Slideshow speed/interval:", self.slideshow_interval)
         form.addRow("", self.skip)
         form.addRow("", self.tags_file)
         form.addRow("", clear_btn)
@@ -2023,5 +2115,6 @@ class SettingsDialog(QDialog):
         s.api_key = self.api_key.text().strip()
         s.blacklist = self.blacklist.toPlainText()
         s.concurrent_downloads = self.concurrency.value()
+        s.slideshow_interval = self.slideshow_interval.value()
         s.skip_downloaded = self.skip.isChecked()
         s.write_tags_file = self.tags_file.isChecked()

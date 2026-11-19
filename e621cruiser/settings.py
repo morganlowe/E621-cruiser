@@ -92,6 +92,7 @@ class Settings:
     favorites_user: str = ""
     window_geometry: str = ""
     splitter_state: str = ""
+    slideshow_interval: float = 5.0
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":

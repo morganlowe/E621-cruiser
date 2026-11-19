@@ -1,7 +1,9 @@
 """Background execution helpers that deliver results on the Qt main thread."""
 from __future__ import annotations
 
+import os
 import threading
+from pathlib import Path
 from typing import Any, Callable
 
 import requests
@@ -87,9 +89,53 @@ def http_session() -> requests.Session:
     return s
 
 
-def fetch_image(url: str, timeout: int = 15) -> QImage:
+def fetch_image(
+    url: str,
+    timeout: int = 15,
+    cache_path: Path | str | None = None,
+    local_path: Path | str | None = None,
+) -> QImage:
+    """Fetch an image, checking local_path or cache_path on disk before downloading."""
+    # 1. Check local_path (e.g. downloaded library file)
+    if local_path:
+        try:
+            lp = Path(local_path)
+            if lp.exists() and lp.stat().st_size > 0:
+                img = QImage(str(lp))
+                if not img.isNull():
+                    return img
+        except OSError:
+            pass
+
+    # 2. Check cache_path (cached preview / thumbnail on disk)
+    if cache_path:
+        try:
+            cp = Path(cache_path)
+            if cp.exists() and cp.stat().st_size > 0:
+                img = QImage(str(cp))
+                if not img.isNull():
+                    return img
+        except OSError:
+            pass
+
+    if not url:
+        return QImage()
+
+    # 3. Not found locally, fetch over network
     r = http_session().get(url, timeout=timeout)
     r.raise_for_status()
+
+    # 4. Save to cache_path atomically if requested
+    if cache_path:
+        try:
+            cp = Path(cache_path)
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cp.with_name(f"{cp.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            tmp.write_bytes(r.content)
+            os.replace(tmp, cp)
+        except OSError:
+            pass
+
     img = QImage()
     img.loadFromData(r.content)
     return img

@@ -7,9 +7,12 @@ import re
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
+
+from PySide6.QtGui import QImage
 
 from .api import Pool, Post
 
@@ -369,4 +372,89 @@ class SpankBank:
     @property
     def pool_count(self) -> int:
         return len(self._pool_ids)
+
+
+class ImageCache:
+    """Manages local disk cache and in-memory cache for preview images and thumbnails."""
+
+    def __init__(self, cache_dir: Path, max_memory_items: int = 120):
+        self.cache_dir = Path(cache_dir)
+        self.previews_dir = self.cache_dir / "previews"
+        self.thumbs_dir = self.cache_dir / "thumbs"
+        try:
+            self.previews_dir.mkdir(parents=True, exist_ok=True)
+            self.thumbs_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        self._memory_previews: OrderedDict[int, QImage] = OrderedDict()
+        self._memory_thumbs: OrderedDict[int, QImage] = OrderedDict()
+        self._max_memory = max_memory_items
+        self._lock = threading.Lock()
+
+    def preview_path(self, post_id: int, ext: str = "jpg") -> Path:
+        clean_ext = ext.lstrip(".").lower() or "jpg"
+        return self.previews_dir / f"{post_id}.{clean_ext}"
+
+    def thumb_path(self, post_id: int, ext: str = "jpg") -> Path:
+        clean_ext = ext.lstrip(".").lower() or "jpg"
+        return self.thumbs_dir / f"{post_id}.{clean_ext}"
+
+    def get_memory_preview(self, post_id: int) -> QImage | None:
+        with self._lock:
+            if post_id in self._memory_previews:
+                self._memory_previews.move_to_end(post_id)
+                return self._memory_previews[post_id]
+        return None
+
+    def set_memory_preview(self, post_id: int, img: QImage) -> None:
+        if img is None or img.isNull():
+            return
+        with self._lock:
+            self._memory_previews[post_id] = img
+            self._memory_previews.move_to_end(post_id)
+            if len(self._memory_previews) > self._max_memory:
+                self._memory_previews.popitem(last=False)
+
+    def get_memory_thumb(self, post_id: int) -> QImage | None:
+        with self._lock:
+            if post_id in self._memory_thumbs:
+                self._memory_thumbs.move_to_end(post_id)
+                return self._memory_thumbs[post_id]
+        return None
+
+    def set_memory_thumb(self, post_id: int, img: QImage) -> None:
+        if img is None or img.isNull():
+            return
+        with self._lock:
+            self._memory_thumbs[post_id] = img
+            self._memory_thumbs.move_to_end(post_id)
+            if len(self._memory_thumbs) > self._max_memory * 4:
+                self._memory_thumbs.popitem(last=False)
+
+    def find_local_image_path(self, post: Post, history: History | None = None,
+                              download_dir: str | None = None) -> Path | None:
+        """Check if post image already exists locally on disk (in history, download_dir, or cache)."""
+        if history:
+            saved = history.path_for(post.id)
+            if saved and os.path.exists(saved) and os.path.getsize(saved) > 0:
+                return Path(saved)
+        if download_dir:
+            try:
+                candidate = Path(download_dir).expanduser() / f"{post.id}.{post.ext}"
+                if candidate.exists() and candidate.stat().st_size > 0:
+                    if history:
+                        history.add(post, candidate)
+                    return candidate
+            except OSError:
+                pass
+        p_cache = self.preview_path(post.id, post.ext)
+        if p_cache.exists() and p_cache.stat().st_size > 0:
+            return p_cache
+        return None
+
+    def clear(self) -> None:
+        with self._lock:
+            self._memory_previews.clear()
+            self._memory_thumbs.clear()
+
 

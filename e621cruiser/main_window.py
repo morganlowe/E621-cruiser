@@ -20,7 +20,7 @@ from .blacklist import Blacklist
 from .downloader import DownloadManager
 from .settings import (DATA_DIR, MEDIA_FILTERS, MIN_SCORE_ANY, QUICK_BLACKLIST_ITEMS,
                        Settings, full_blacklist)
-from .storage import ORGANIZE_MODES, DownloadJob, History, SpankBank
+from .storage import ORGANIZE_MODES, DownloadJob, History, ImageCache, SpankBank
 from .widgets import (CollapsibleSection, PostGrid, PostInspector, PreviewDialog,
                       SettingsDialog, TagLineEdit, TagListWidget, artist_page_url)
 from .workers import Runner, fetch_image
@@ -221,10 +221,11 @@ class MainWindow(QMainWindow):
         data_dir = Path(data_dir) if data_dir is not None else DATA_DIR
         self.history = History(data_dir / "history.db")
         self.spank_bank = SpankBank(data_dir / "spank_bank.db")
+        self.image_cache = ImageCache(data_dir / "cache")
         self.api = Runner(2, self)      # API calls (rate-limited inside the client)
         self.tag_api = Runner(1, self)  # Dedicated runner for tag autocomplete
         self.thumbs = Runner(6, self)   # thumbnails / previews from the static CDN
-        self.downloads = DownloadManager(self.history, self)
+        self.downloads = DownloadManager(self.history, self, image_cache=self.image_cache)
         self.client = E621Client()
         self.blacklist = Blacklist(full_blacklist(self.settings))
 
@@ -1782,8 +1783,12 @@ class MainWindow(QMainWindow):
             for p in snap.posts:
                 if p.id in self._cached_thumbs:
                     tab.grid.set_thumbnail(p.id, self._cached_thumbs[p.id])
+                elif mem := self.image_cache.get_memory_thumb(p.id):
+                    self._cached_thumbs[p.id] = mem
+                    tab.grid.set_thumbnail(p.id, mem)
                 elif p.preview_url:
-                    self.thumbs.submit(fetch_image, p.preview_url,
+                    thumb_cache = self.image_cache.thumb_path(p.id, p.ext)
+                    self.thumbs.submit(fetch_image, p.preview_url, 15, thumb_cache,
                                        on_result=partial(self._on_thumb, tab.gen, p.id),
                                        on_error=lambda e: None)
             tab.grid.verticalScrollBar().setValue(snap.scroll_pos)
@@ -1881,14 +1886,19 @@ class MainWindow(QMainWindow):
         for p in added:
             if p.id in self._cached_thumbs:
                 tab.grid.set_thumbnail(p.id, self._cached_thumbs[p.id])
+            elif mem := self.image_cache.get_memory_thumb(p.id):
+                self._cached_thumbs[p.id] = mem
+                tab.grid.set_thumbnail(p.id, mem)
             elif p.preview_url:
-                self.thumbs.submit(fetch_image, p.preview_url,
+                thumb_cache = self.image_cache.thumb_path(p.id, p.ext)
+                self.thumbs.submit(fetch_image, p.preview_url, 15, thumb_cache,
                                    on_result=partial(self._on_thumb, gen, p.id),
                                    on_error=lambda e: None)
         self._update_result_label()
 
     def _on_thumb(self, gen: int, post_id: int, img: QImage) -> None:
         self._cached_thumbs[post_id] = img
+        self.image_cache.set_memory_thumb(post_id, img)
         if gen == self._gen:
             self.grid.set_thumbnail(post_id, img)
             self.inspector.set_thumbnail(post_id, img)
@@ -2182,11 +2192,14 @@ class MainWindow(QMainWindow):
         idx = all_posts.index(post) if post in all_posts else 0
         in_bank = self.spank_bank.has(post.id)
         pool_in_bank = any(self.spank_bank.has_pool(pid) for pid in post.pools) if post.pools else False
+        interval = getattr(self.settings, "slideshow_interval", 5.0)
         dlg = PreviewDialog(post, all_posts=all_posts, index=idx,
                             active_query=self.tag_edit.text(), in_bank=in_bank, pool_in_bank=pool_in_bank,
                             start_slideshow=start_slideshow, shuffle=shuffle,
-                            artist_in_bank=self.spank_bank.has_artist, parent=self)
+                            artist_in_bank=self.spank_bank.has_artist, parent=self,
+                            slideshow_interval=interval)
         self._preview_dlg = dlg
+        dlg.slideshow_interval_changed.connect(self._on_slideshow_interval_changed)
         dlg.add_tag.connect(self._toggle_tag_in_search)
         dlg.exclude_tag.connect(self._exclude_tag_in_search)
         dlg.search_tag.connect(self._search_only_tag)
@@ -2212,18 +2225,68 @@ class MainWindow(QMainWindow):
         dlg.enter_fullscreen()
         return dlg
 
+    def _on_slideshow_interval_changed(self, val: float) -> None:
+        self.settings.slideshow_interval = val
+        self.settings.save()
+
     def _load_preview_image(self, dlg: PreviewDialog, post: Post) -> None:
-        if thumb := self.grid._images.get(post.id):
+        # 1. Fast path: check in-memory preview cache
+        if cached := self.image_cache.get_memory_preview(post.id):
+            dlg.set_image(cached)
+            self._prefetch_slideshow(dlg)
+            return
+
+        # 2. Show thumbnail placeholder if available
+        if thumb := self.grid._images.get(post.id) or self.image_cache.get_memory_thumb(post.id):
             dlg.set_image(thumb)
+
+        # 3. Check local downloaded file (history or download_dir)
+        local_path = self.history.path_for(post.id)
+        if not local_path and self.settings.download_dir:
+            try:
+                candidate = Path(self.settings.download_dir).expanduser() / f"{post.id}.{post.ext}"
+                if candidate.exists() and candidate.stat().st_size > 0:
+                    local_path = str(candidate)
+                    self.history.add(post, candidate)
+            except OSError:
+                pass
+
+        cache_path = self.image_cache.preview_path(post.id, post.ext)
         url = post.sample_url or post.file_url or post.preview_url
-        if url:
-            self.thumbs.submit(
-                fetch_image, url,
-                on_result=lambda img, p=post: dlg.set_image(img) if dlg.post.id == p.id else None,
-                on_error=lambda e, p=post: dlg.set_error(str(e)) if dlg.post.id == p.id else None,
-            )
-        else:
+
+        if not url and not local_path and not (cache_path.exists() and cache_path.stat().st_size > 0):
             dlg.set_error("No image URL (post may require login in Settings).")
+            return
+
+        def on_loaded(img: QImage, p=post) -> None:
+            self.image_cache.set_memory_preview(p.id, img)
+            if dlg.post.id == p.id:
+                dlg.set_image(img)
+            self._prefetch_slideshow(dlg)
+
+        self.thumbs.submit(
+            fetch_image, url or "", 15, cache_path, local_path,
+            on_result=on_loaded,
+            on_error=lambda e, p=post: dlg.set_error(str(e)) if dlg.post.id == p.id else None,
+        )
+
+    def _prefetch_slideshow(self, dlg: PreviewDialog) -> None:
+        """Prefetch next slide in the background so transitions are instantaneous and offline."""
+        if not dlg or not dlg._posts or len(dlg._posts) <= 1:
+            return
+        next_idx = (dlg._index + 1) % len(dlg._posts)
+        next_post = dlg._posts[next_idx]
+        if self.image_cache.get_memory_preview(next_post.id) is not None:
+            return
+        local_p = self.history.path_for(next_post.id)
+        cache_p = self.image_cache.preview_path(next_post.id, next_post.ext)
+        url = next_post.sample_url or next_post.file_url or next_post.preview_url
+        if url or local_p or (cache_p.exists() and cache_p.stat().st_size > 0):
+            self.thumbs.submit(
+                fetch_image, url or "", 15, cache_p, local_p,
+                on_result=lambda img, p=next_post: self.image_cache.set_memory_preview(p.id, img),
+                on_error=lambda e: None,
+            )
 
     def _toggle_tag_in_search(self, tag: str) -> None:
         self.tabs.setCurrentIndex(0)

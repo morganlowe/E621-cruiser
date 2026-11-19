@@ -11,7 +11,7 @@ import requests
 from PySide6.QtCore import QObject, Signal
 
 from .api import ApiError, E621Client, Pool
-from .storage import DownloadJob, History, build_target
+from .storage import DownloadJob, History, ImageCache, build_target
 from .workers import http_session
 
 
@@ -20,9 +20,11 @@ class DownloadManager(QObject):
     item_finished = Signal(int, str, str)   # post_id, status, detail
     idle = Signal()
 
-    def __init__(self, history: History, parent: QObject | None = None):
+    def __init__(self, history: History, parent: QObject | None = None,
+                 image_cache: ImageCache | None = None):
         super().__init__(parent)
         self.history = history
+        self.image_cache = image_cache
         self.client: E621Client | None = None
         self._queue: queue.Queue[tuple[int, DownloadJob]] = queue.Queue()
         self._lock = threading.Lock()
@@ -133,6 +135,21 @@ class DownloadManager(QObject):
         if job.skip_downloaded and target.exists() and target.stat().st_size > 0:
             self.history.add(post, target)
             return "skipped", f"exists: {target}"
+
+        if self.image_cache is not None:
+            cpath = self.image_cache.preview_path(post.id, post.ext)
+            if cpath.exists() and cpath.stat().st_size > 0:
+                if not post.sample_url or post.sample_url == post.file_url:
+                    try:
+                        import shutil
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(cpath, target)
+                        if job.write_tags:
+                            self._write_tags(target, job)
+                        self.history.add(post, target)
+                        return "ok", str(target)
+                    except OSError:
+                        pass
 
         target.parent.mkdir(parents=True, exist_ok=True)
         part = target.with_name(target.name + ".part")
