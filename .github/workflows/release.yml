@@ -85,12 +85,13 @@ jobs:
       - name: Build Fedora .rpm package
         run: |
           VERSION="${{ needs.meta.outputs.version }}"
-          mkdir -p /root/rpmbuild/{SOURCES,SPECS}
-          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "/root/rpmbuild/SOURCES/e621-cruiser-${VERSION}.tar.gz" .
-          cp packaging/rpm/e621-cruiser.spec /root/rpmbuild/SPECS/
-          rpmbuild -bb --define "_version ${VERSION}" /root/rpmbuild/SPECS/e621-cruiser.spec
+          TOPDIR="${HOME}/rpmbuild"
+          mkdir -p "$TOPDIR/SOURCES" "$TOPDIR/SPECS"
+          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "$TOPDIR/SOURCES/e621-cruiser-${VERSION}.tar.gz" .
+          cp packaging/rpm/e621-cruiser.spec "$TOPDIR/SPECS/"
+          rpmbuild -bb --define "_topdir ${TOPDIR}" --define "_version ${VERSION}" "$TOPDIR/SPECS/e621-cruiser.spec"
           mkdir -p dist
-          cp /root/rpmbuild/RPMS/noarch/*.rpm dist/
+          cp "$TOPDIR"/RPMS/noarch/*.rpm dist/
       - uses: actions/upload-artifact@v4
         with:
           name: rpm-package
