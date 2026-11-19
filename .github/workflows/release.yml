@@ -1,0 +1,137 @@
+name: Build & Release Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach packages to (e.g. v1.1.0)"
+        required: true
+        default: "v1.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+    steps:
+      - id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build-deb:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build .deb package
+        run: bash packaging/deb/build_deb.sh "${{ needs.meta.outputs.version }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: dist/*.deb
+
+  build-arch:
+    needs: meta
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: pacman -Syu --noconfirm base-devel git tar
+      - uses: actions/checkout@v4
+      - name: Build Arch package (.pkg.tar.zst)
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          useradd -m builder
+          WORK="/home/builder/build"
+          mkdir -p "$WORK"
+          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "$WORK/e621-cruiser-${VERSION}.tar.gz" .
+          sed "s/^pkgver=.*/pkgver=${VERSION}/" packaging/arch/PKGBUILD > "$WORK/PKGBUILD"
+          chown -R builder:builder "$WORK"
+          su builder -c "cd '$WORK' && makepkg --nodeps --skipchecksums"
+          mkdir -p dist
+          cp "$WORK"/*.pkg.tar.* dist/
+          cp "$WORK/PKGBUILD" dist/PKGBUILD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: |
+            dist/*.pkg.tar.*
+            dist/PKGBUILD
+
+  build-rpm:
+    needs: meta
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - name: Install rpmbuild
+        run: dnf install -y rpm-build tar gzip
+      - uses: actions/checkout@v4
+      - name: Build Fedora .rpm package
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          mkdir -p /root/rpmbuild/{SOURCES,SPECS}
+          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "/root/rpmbuild/SOURCES/e621-cruiser-${VERSION}.tar.gz" .
+          cp packaging/rpm/e621-cruiser.spec /root/rpmbuild/SPECS/
+          rpmbuild -bb --define "_version ${VERSION}" /root/rpmbuild/SPECS/e621-cruiser.spec
+          mkdir -p dist
+          cp /root/rpmbuild/RPMS/noarch/*.rpm dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-package
+          path: dist/*.rpm
+
+  build-windows:
+    needs: meta
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: Build Windows executable
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.meta.outputs.version }}"
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "E621Cruiser-${VERSION}-windows-x64" `
+            --icon "assets/e621-cruiser.ico" `
+            --add-data "assets;assets" `
+            packaging/windows/launcher.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: dist/*.exe
+
+  release:
+    needs: [meta, build-deb, build-arch, build-rpm, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Upload packages to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          files: release-assets/*

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import os
+import sys
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -212,10 +213,15 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: Settings | None = None, data_dir: Path | None = None) -> None:
         super().__init__()
         self.setWindowTitle("E621 Cruiser")
-        assets = Path(__file__).resolve().parent.parent / "assets"
+        meipass = getattr(sys, "_MEIPASS", None)
+        assets = (Path(meipass) / "assets") if meipass else (Path(__file__).resolve().parent.parent / "assets")
         icon_path = (assets / "e621-cruiser.ico") if (assets / "e621-cruiser.ico").exists() else (assets / "e621-cruiser.png")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            theme_icon = QIcon.fromTheme("e621-cruiser")
+            if not theme_icon.isNull():
+                self.setWindowIcon(theme_icon)
         self.resize(1400, 900)
         self.settings = settings if settings is not None else Settings.load()
         data_dir = Path(data_dir) if data_dir is not None else DATA_DIR
