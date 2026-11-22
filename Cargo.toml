@@ -1,0 +1,42 @@
+[package]
+name = "e621-cruiser"
+version = "2.0.0"
+edition = "2021"
+description = "Fast native desktop browser, gallery, and downloader for e621"
+license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "e621_cruiser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "e621-cruiser"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "accesskit"] }
+egui = "0.31"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+md-5 = "0.10"
+rand = "0.8"
+dirs = "5"
+open = "5"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "net", "time"] }
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
+opt-level = 3

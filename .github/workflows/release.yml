@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to attach packages to (e.g. v1.1.0)"
+        description: "Release tag to attach packages to (e.g. v2.0.0)"
         required: true
-        default: "v1.1.0"
+        default: "v2.0.0"
 
 permissions:
   contents: write
@@ -32,26 +32,52 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-  build-deb:
+  test:
     needs: meta
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build .deb package
-        run: bash packaging/deb/build_deb.sh "${{ needs.meta.outputs.version }}" dist
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run Rust test suite
+        run: cargo test --locked
+
+  build-deb:
+    needs: [meta, test]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Build .deb and portable Linux archive
+        run: |
+          VERSION="${{ needs.meta.outputs.version }}"
+          bash packaging/deb/build_deb.sh "${VERSION}" dist
+          STAGE="e621-cruiser-${VERSION}-linux-x86_64"
+          mkdir -p "$STAGE/assets"
+          cp target/release/e621-cruiser "$STAGE/"
+          cp assets/e621-cruiser.png assets/e621-cruiser.svg "$STAGE/assets/"
+          cp README.md LICENSE "$STAGE/"
+          tar -czf "dist/e621-cruiser-${VERSION}-linux-x86_64.tar.gz" "$STAGE"
+          rm -rf "$STAGE"
       - uses: actions/upload-artifact@v4
         with:
-          name: deb-package
-          path: dist/*.deb
+          name: linux-deb-and-tarball
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
 
   build-arch:
-    needs: meta
+    needs: [meta, test]
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
     steps:
       - name: Install build tools
-        run: pacman -Syu --noconfirm base-devel git tar
+        run: pacman -Syu --noconfirm base-devel rust git tar
       - uses: actions/checkout@v4
       - name: Build Arch package (.pkg.tar.zst)
         run: |
@@ -59,7 +85,9 @@ jobs:
           useradd -m builder
           WORK="/home/builder/build"
           mkdir -p "$WORK"
-          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "$WORK/e621-cruiser-${VERSION}.tar.gz" .
+          tar --exclude='.git' --exclude='dist' --exclude='target' --exclude='.venv' \
+            --transform "s,^\.,e621-cruiser-${VERSION}," \
+            -czf "$WORK/e621-cruiser-${VERSION}.tar.gz" .
           sed "s/^pkgver=.*/pkgver=${VERSION}/" packaging/arch/PKGBUILD > "$WORK/PKGBUILD"
           chown -R builder:builder "$WORK"
           su builder -c "cd '$WORK' && makepkg --nodeps --skipchecksums"
@@ -74,50 +102,45 @@ jobs:
             dist/PKGBUILD
 
   build-rpm:
-    needs: meta
+    needs: [meta, test]
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
     steps:
-      - name: Install rpmbuild
-        run: dnf install -y rpm-build tar gzip
+      - name: Install rpmbuild and Rust toolchain
+        run: dnf install -y rpm-build cargo rust gcc tar gzip
       - uses: actions/checkout@v4
       - name: Build Fedora .rpm package
         run: |
           VERSION="${{ needs.meta.outputs.version }}"
           TOPDIR="${HOME}/rpmbuild"
           mkdir -p "$TOPDIR/SOURCES" "$TOPDIR/SPECS"
-          tar --exclude='.git' --exclude='dist' --transform "s,^\.,e621-cruiser-${VERSION}," -czf "$TOPDIR/SOURCES/e621-cruiser-${VERSION}.tar.gz" .
+          tar --exclude='.git' --exclude='dist' --exclude='target' --exclude='.venv' \
+            --transform "s,^\.,e621-cruiser-${VERSION}," \
+            -czf "$TOPDIR/SOURCES/e621-cruiser-${VERSION}.tar.gz" .
           cp packaging/rpm/e621-cruiser.spec "$TOPDIR/SPECS/"
           rpmbuild -bb --define "_topdir ${TOPDIR}" --define "_version ${VERSION}" "$TOPDIR/SPECS/e621-cruiser.spec"
           mkdir -p dist
-          cp "$TOPDIR"/RPMS/noarch/*.rpm dist/
+          cp "$TOPDIR"/RPMS/*/*.rpm dist/
       - uses: actions/upload-artifact@v4
         with:
           name: rpm-package
           path: dist/*.rpm
 
   build-windows:
-    needs: meta
+    needs: [meta, test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies and PyInstaller
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+      - uses: dtolnay/rust-toolchain@stable
       - name: Build Windows executable
+        run: cargo build --release --locked
+      - name: Package Windows executable
         shell: pwsh
         run: |
           $VERSION = "${{ needs.meta.outputs.version }}"
-          pyinstaller --noconfirm --onefile --windowed `
-            --name "E621Cruiser-${VERSION}-windows-x64" `
-            --icon "assets/e621-cruiser.ico" `
-            --add-data "assets;assets" `
-            packaging/windows/launcher.py
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/release/e621-cruiser.exe" "dist/E621Cruiser-${VERSION}-windows-x64.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-package

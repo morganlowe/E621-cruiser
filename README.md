@@ -5,8 +5,8 @@
 <h1 align="center">E621 Cruiser</h1>
 
 <p align="center">
-  <b>A fast, native desktop browser, gallery, and downloader for e621 built with Python &amp; PySide6 (Qt 6).</b><br>
-  Tabbed tag &amp; pool browsing, instant autocomplete, floating hover previews, true full-screen viewer, automated slideshows, local caching, and one-click batch downloads.
+  <b>A fast, self-contained native desktop browser, gallery, and downloader for e621 built in Rust with egui &amp; eframe.</b><br>
+  Single native binary with zero Python, Qt, GTK, OpenSSL, or system SQLite runtime dependencies — plus tabbed tag &amp; pool browsing, instant autocomplete, floating hover previews, true full-screen viewer, automated slideshows, local caching, and batch downloads.
 </p>
 
 <p align="center">
@@ -23,6 +23,8 @@
 <p align="center">
   <a href="https://github.com/morganlowe/E621-cruiser/releases/latest"><b>Download Latest Release</b></a>
   &nbsp;·&nbsp;
+  <a href="#whats-new-in-v20">What's New</a>
+  &nbsp;·&nbsp;
   <a href="#download--install">Installation</a>
   &nbsp;·&nbsp;
   <a href="#features">Features</a>
@@ -34,26 +36,41 @@
 
 ---
 
+## What's New in v2.0
+
+E621 Cruiser 2.0 is a **complete ground-up rewrite in Rust** (`egui` + `eframe`), replacing the v1.x Python + PySide6 stack with a single self-contained native executable:
+
+- **Zero Runtime Dependencies**: Compiles into one native binary with bundled TLS (`rustls`), SQLite (`rusqlite`), native file dialogs (`rfd`), and embedded assets — no Python, Qt, GTK, OpenSSL, or system SQLite setup required across Linux distros or Windows.
+- **First-Run API Key Onboarding Splash**: Presents e621 username and API key fields with step-by-step setup instructions, a direct button to `e621.net → Account → Manage API Access`, a Show/Hide API key toggle, inline **Test Connection**, and **Skip for now (Browse Anonymously)** (re-openable anytime from **File → API Key Setup…**).
+- **Drop-In v1.x Data Migration**: Automatically reuses your existing `settings.json`, `history.db`, `spank_bank.db`, and image cache (including legacy `e621-grabber` folders), and skips the first-run splash automatically if credentials are already configured.
+- **UI & Ergonomic Polish**: Non-blocking async connection testing in Settings & Setup, persisted window dimensions and panel splitter widths, responsive layout across window sizes, dynamic viewer window titles, and a new **portable Linux `.tar.gz`** alongside `.deb`, `.pkg.tar.zst`, `.rpm`, and standalone Windows `.exe`.
+
+---
+
 ## Download & Install
 
-Grab the prebuilt package for your OS from the [**Latest Release**](https://github.com/morganlowe/E621-cruiser/releases/latest) page:
+Grab the prebuilt native package for your OS from the [**Latest Release**](https://github.com/morganlowe/E621-cruiser/releases/latest) page:
 
 | Platform | Package | Install / Run |
 | :--- | :--- | :--- |
-| **Windows (x64)** | `E621Cruiser-*-windows-x64.exe` | Standalone app — just double-click to run (no Python needed) |
-| **Debian / Ubuntu** | `e621-cruiser_*_all.deb` | `sudo apt install ./e621-cruiser_*_all.deb` |
-| **Arch / CachyOS / Manjaro** | `e621-cruiser-*-any.pkg.tar.zst` | `sudo pacman -U e621-cruiser-*-any.pkg.tar.zst` |
-| **Fedora** | `e621-cruiser-*.noarch.rpm` | `sudo dnf install ./e621-cruiser-*.noarch.rpm` |
+| **Windows (x64)** | `E621Cruiser-*-windows-x64.exe` | Standalone native executable — just double-click to run |
+| **Debian / Ubuntu** | `e621-cruiser_*_amd64.deb` | `sudo apt install ./e621-cruiser_*_amd64.deb` |
+| **Arch / CachyOS / Manjaro** | `e621-cruiser-*-x86_64.pkg.tar.zst` | `sudo pacman -U e621-cruiser-*-x86_64.pkg.tar.zst` |
+| **Fedora** | `e621-cruiser-*.x86_64.rpm` | `sudo dnf install ./e621-cruiser-*.x86_64.rpm` |
+| **Portable Linux (x86_64)** | `e621-cruiser-*-linux-x86_64.tar.gz` | Extract and run `./e621-cruiser` on any modern Linux distro |
 
 ### Platform Notes
 
-- **Windows**: The `.exe` bundles Python and Qt so nothing else needs to be installed. Because it is not code-signed, Windows SmartScreen may show a prompt on first launch — click **More info → Run anyway**.
-- **Debian / Ubuntu**: Installs `e621-cruiser` to your application menu and `PATH`, automatically pulling in `python3-pyside6` and `python3-requests`. Requires Ubuntu 24.04+ / Debian 12+.
+- **Windows**: Single standalone `.exe` compiled from Rust with bundled TLS (`rustls`), SQLite, and UI — nothing else needs to be installed. Because it is not code-signed, Windows SmartScreen may show a prompt on first launch — click **More info → Run anyway**.
+- **Debian / Ubuntu**: Installs `e621-cruiser` to your application menu and `/usr/bin/e621-cruiser` with minimal system C runtime dependencies (`libc6`, `libgcc-s1`). Requires Ubuntu 22.04+ / Debian 12+.
 - **Arch / CachyOS**: Install the `.pkg.tar.zst` directly with `pacman -U`, or download the attached `PKGBUILD` from the release and run `makepkg -si`.
-- **Fedora**: `sudo dnf install ./e621-cruiser-*.noarch.rpm` installs the launcher, desktop entry, icons, and Python/PySide6 dependencies automatically.
+- **Fedora**: `sudo dnf install ./e621-cruiser-*.x86_64.rpm` installs the native binary, desktop entry, and icons.
+- **Portable Linux**: Built on Ubuntu 22.04 (`glibc 2.35+`) so it runs directly across distributions without dependency conflicts.
 
 <details>
-<summary><b>Install from Source (Linux &amp; Windows)</b></summary>
+<summary><b>Build &amp; Install from Source (Linux &amp; Windows)</b></summary>
+
+Requires the [Rust toolchain (`cargo` / `rustc`)](https://rustup.rs/).
 
 #### Linux
 ```bash
@@ -61,10 +78,10 @@ git clone https://github.com/morganlowe/E621-cruiser.git
 cd E621-cruiser
 ./install.sh
 ```
-This creates `.venv`, installs dependencies, and adds **E621 Cruiser** to your application menu, Desktop, and `~/.local/bin/e621-cruiser`. Run `./uninstall.sh` to remove shortcuts.
+This compiles `target/release/e621-cruiser`, installs it to `~/.local/bin/e621-cruiser`, and adds **E621 Cruiser** to your application menu and Desktop. Run `./uninstall.sh` to remove binary and shortcuts.
 
 #### Windows
-1. Install [Python 3.10+](https://www.python.org/downloads/) with **"Add python.exe to PATH"** checked.
+1. Install [Rust (`rustup`)](https://rustup.rs/).
 2. Clone and run the installer:
    ```cmd
    git clone https://github.com/morganlowe/E621-cruiser.git
@@ -87,12 +104,12 @@ This creates `.venv`, installs dependencies, and adds **E621 Cruiser** to your a
 - **Quick Blacklist & Client-Side Filtering**: Collapsible one-click exclusions (Gore, Scat, Watersports, Young/Cub, Flash) plus full e621-syntax client-side blacklist rules persisted across restarts.
 
 ### Viewer, Caching & Slideshows
-- **Hover & True Full-Screen Viewer**: Floating preview card on hover; click to open the full-screen viewer with edge-click and keyboard navigation (`Left`/`Right`/`A`/`D`), `F11` true fullscreen, and toggleable tag sidebar (`T`).
+- **Hover & True Full-Screen Viewer**: Floating preview card on hover; click or double-click to open the full-screen viewer with edge-click and keyboard navigation (`Left`/`Right`/`A`/`D`), `F11` / `F` true fullscreen, and toggleable tag sidebar (`T`).
 - **Local Disk & Memory Image Cache**: Checks downloaded library files and local cache before re-fetching thumbnails or previews, and reuses cached full-size images during downloads.
-- **Automated Slideshows**: Play any search, pool, artist, or Spank Bank collection with configurable intervals (`1–300s`), reading order or shuffle mode, and `Space` to pause/resume.
+- **Automated Slideshows**: Play any search, pool, artist, or Spank Bank collection with configurable intervals (`0.5–300s`), live `+` / `-` speed controls, reading order or shuffle mode, and `Space` to pause/resume.
 
 ### Spank Bank & Direct e621 Sync
-- **Spank Bank (Online Bookmarks)**: Bookmark **Posts**, **Pools**, and **Artists** in a persistent local database without downloading files. Includes instant filtering, a combined **Latest From All Saved Artists** feed, and batch downloading organized by pool or artist.
+- **Spank Bank (Online Bookmarks)**: Bookmark **Posts**, **Pools**, and **Artists** in a persistent local SQLite database without downloading files. Includes instant filtering, a combined **Latest From All Saved Artists** feed, and batch downloading organized by pool or artist.
 - **Credit Artists on e621**: Favorite (`L`) and upvote (`U`) posts directly from the inspector, viewer, or right-click menu — synced straight to your e621 account so artists receive credit and favorites appear in `fav:yourusername`.
 
 ### Smart Batch Downloads
@@ -105,12 +122,14 @@ This creates `.venv`, installs dependencies, and adds **E621 Cruiser** to your a
 
 ## First-Time Setup
 
-E621 Cruiser works out of the box in **Anonymous Mode**, or you can connect your e621 account to unlock restricted posts, private favorites, and live favoriting/upvoting:
+On your first launch without saved credentials, E621 Cruiser greets you with an **API Key Setup** splash screen explaining how to connect your account:
 
-1. Open **File → Settings** (`Ctrl+,`).
-2. Create an API key at [e621.net → Account → Manage API Access](https://e621.net/users/home).
-3. Enter your **Username** and **API Key**, then click **Test Connection**.
-4. *(Optional)* Add client-side blacklist rules, choose your default download folder, and set parallel download threads (`1–8`).
+1. Sign in to [e621.net](https://e621.net) in your browser and open **Account → Manage API Access** (or click **Open e621 Account Page** on the splash screen).
+2. Re-enter your password when prompted, then view or generate your API key.
+3. Enter your **e621 Username** (not email) and **API Key**, click **Test Connection** to verify, and press **Save & Continue**.
+4. Prefer not to log in right away? Click **Skip for now (Browse Anonymously)** — you can return anytime via **File → API Key Setup…** or **File → Settings** (`Ctrl+,`) to set up credentials, blacklist rules, download folders, and parallel download threads (`1–8`).
+
+Existing `settings.json`, `history.db`, `spank_bank.db`, and cached images from v1.x are automatically preserved (and the first-run splash is skipped automatically when credentials are already present):
 
 | File | Linux | Windows |
 | :--- | :--- | :--- |
@@ -130,7 +149,8 @@ E621 Cruiser works out of the box in **Anonymous Mode**, or you can connect your
 | `Escape` | Close autocomplete popup or viewer |
 | `Left / Right` or `A / D` | Previous / Next image in viewer |
 | `Space` | Play / Pause slideshow |
-| `F11` | Toggle true fullscreen |
+| `+ / -` | Increase / decrease slideshow speed in viewer |
+| `F11` or `F` | Toggle true fullscreen |
 | `T` | Toggle tag sidebar in viewer |
 | `L` | Favorite / unfavorite post on e621 |
 | `U` | Upvote / remove upvote on e621 (`+1`) |
@@ -165,12 +185,13 @@ E621 Cruiser works out of the box in **Anonymous Mode**, or you can connect your
 
 ## Development & Packaging
 
-Run the test suite:
+Run the test suite and linter:
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+cargo test
+cargo clippy --all-targets
 ```
 
-Packaging definitions live in [`packaging/`](packaging/) (`.deb`, Arch `PKGBUILD`, Fedora `.spec`, and Windows PyInstaller launcher) and are built automatically on every `v*` tag push via [`.github/workflows/release.yml`](.github/workflows/release.yml).
+Packaging definitions live in [`packaging/`](packaging/) (`.deb`, Arch `PKGBUILD`, Fedora `.spec`, and Windows icon resource via `build.rs`) and are built automatically on every `v*` tag push via [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ---
 

@@ -1,30 +1,39 @@
 # Maintainer: Morgan Lowe <https://github.com/morganlowe/E621-cruiser>
 pkgname=e621-cruiser
-pkgver=1.1.0
+pkgver=2.0.0
 pkgrel=1
-pkgdesc="Desktop browser and downloader for e621"
-arch=('any')
+pkgdesc="Native Rust desktop browser and downloader for e621"
+arch=('x86_64')
 url="https://github.com/morganlowe/E621-cruiser"
 license=('MIT')
-depends=('python' 'pyside6' 'python-requests')
+depends=('glibc' 'gcc-libs')
+optdepends=(
+    'libglvnd: OpenGL rendering'
+    'xdg-desktop-portal: native folder picker'
+)
+makedepends=('cargo')
+options=('!lto' '!debug')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/morganlowe/E621-cruiser/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
+_srcdir_root() {
+    if [ -d "${srcdir}/E621-cruiser-${pkgver}" ]; then
+        printf '%s\n' "${srcdir}/E621-cruiser-${pkgver}"
+    else
+        printf '%s\n' "${srcdir}/${pkgname}-${pkgver}"
+    fi
+}
+
+build() {
+    cd "$(_srcdir_root)"
+    cargo build --release --locked
+}
+
 package() {
     local srcdir_root
-    if [ -d "${srcdir}/E621-cruiser-${pkgver}" ]; then
-        srcdir_root="${srcdir}/E621-cruiser-${pkgver}"
-    else
-        srcdir_root="${srcdir}/${pkgname}-${pkgver}"
-    fi
+    srcdir_root="$(_srcdir_root)"
 
-    install -dm755 "${pkgdir}/usr/share/e621-cruiser/e621cruiser"
-    install -dm755 "${pkgdir}/usr/share/e621-cruiser/assets"
-    install -m644 "${srcdir_root}"/e621cruiser/*.py "${pkgdir}/usr/share/e621-cruiser/e621cruiser/"
-    install -m644 "${srcdir_root}"/assets/e621-cruiser.png "${pkgdir}/usr/share/e621-cruiser/assets/"
-    install -m644 "${srcdir_root}"/assets/e621-cruiser.svg "${pkgdir}/usr/share/e621-cruiser/assets/"
-
-    install -Dm755 "${srcdir_root}/packaging/e621-cruiser.sh" "${pkgdir}/usr/bin/e621-cruiser"
+    install -Dm755 "${srcdir_root}/target/release/e621-cruiser" "${pkgdir}/usr/bin/e621-cruiser"
     ln -sf e621-cruiser "${pkgdir}/usr/bin/e621cruiser"
 
     install -Dm644 "${srcdir_root}/packaging/e621-cruiser.desktop" "${pkgdir}/usr/share/applications/e621-cruiser.desktop"

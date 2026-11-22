@@ -9,4 +9,4 @@ Terminal=false
 Categories=Network;Graphics;Viewer;
 Keywords=e621;art;booru;image;crawler;cruiser;gallery;
 StartupNotify=true
-StartupWMClass=e621cruiser
+StartupWMClass=e621-cruiser
